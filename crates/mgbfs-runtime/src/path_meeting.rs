@@ -4,12 +4,28 @@ pub(crate) type LayerRange = (u32, u32);
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Meeting {
-    pub(crate) left_row: u32,
-    pub(crate) right_row: u32,
+    pub(crate) left_row: u64,
+    pub(crate) right_row: u64,
     pub(crate) right_depth: usize,
 }
 
-pub(crate) fn decode_meeting(
+impl Meeting {
+    pub(crate) fn reply_words(&self) -> [i64; 3] {
+        [self.right_depth as i64, self.left_row as i64, self.right_row as i64]
+    }
+
+    pub(crate) fn from_reply_words([depth, left, right]: [i64; 3]) -> Result<Self> {
+        Ok(Self {
+            left_row: left as u64,
+            right_row: right as u64,
+            right_depth: usize::try_from(depth).map_err(|_| "NATIVE_PATH_MEET_DEPTH")?,
+        })
+    }
+}
+
+// The flat CUDA V1 kernel orders candidates with a packed atomic minimum.
+// Widen both physical rows before crossing the rank boundary.
+pub(crate) fn decode_flat_meeting(
     best: u64,
     left: LayerRange,
     right_layers: &[LayerRange],
@@ -33,8 +49,8 @@ pub(crate) fn decode_meeting(
         return Err("NATIVE_PATH_MEET_RIGHT_BOUNDS".into());
     }
     Ok(Some(Meeting {
-        left_row,
-        right_row,
+        left_row: u64::from(left_row),
+        right_row: u64::from(right_row),
         right_depth,
     }))
 }
@@ -91,16 +107,26 @@ mod meeting_tests {
     fn meeting_depth_uses_committed_rows_and_skips_empty_layers() {
         let prior = [(0, 0), (0, 2), (2, 0), (2, 3), (5, 0)];
         let pair = |left: u32, right: u32| (u64::from(right) << 32) | u64::from(left);
-        assert_eq!(decode_meeting(u64::MAX, (9, 2), &prior).unwrap(), None);
+        assert_eq!(decode_flat_meeting(u64::MAX, (9, 2), &prior).unwrap(), None);
         assert_eq!(
-            decode_meeting(pair(10, 2), (9, 2), &prior).unwrap(),
+            decode_flat_meeting(pair(10, 2), (9, 2), &prior).unwrap(),
             Some(Meeting {
                 left_row: 10,
                 right_row: 2,
                 right_depth: 3
             })
         );
-        assert!(decode_meeting(pair(11, 2), (9, 2), &prior).is_err());
-        assert!(decode_meeting(pair(9, 5), (9, 2), &prior).is_err());
+        assert!(decode_flat_meeting(pair(11, 2), (9, 2), &prior).is_err());
+        assert!(decode_flat_meeting(pair(9, 5), (9, 2), &prior).is_err());
+    }
+
+    #[test]
+    fn meeting_reply_preserves_full_logical_rows() {
+        let meeting = Meeting {
+            left_row: (1 << 32) + 17,
+            right_row: (1 << 63) + 29,
+            right_depth: 4,
+        };
+        assert_eq!(Meeting::from_reply_words(meeting.reply_words()).unwrap(), meeting);
     }
 }

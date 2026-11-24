@@ -47,7 +47,21 @@ impl Receipt {
 #[derive(Clone, Copy)]
 pub(super) struct OwnerRow {
     pub(super) owner: usize,
-    pub(super) row: u32,
+    pub(super) row: u64,
+}
+
+impl OwnerRow {
+    pub(super) fn reply_words(self) -> [i64; 2] {
+        [self.owner as i64, self.row as i64]
+    }
+
+    pub(super) fn from_reply_words([owner, row]: [i64; 2], world: usize) -> Result<Self> {
+        let owner = usize::try_from(owner).map_err(|_| "NATIVE_PATH_PARENT_LINK")?;
+        if owner >= world {
+            return Err("NATIVE_PATH_PARENT_LINK".into());
+        }
+        Ok(Self { owner, row: row as u64 })
+    }
 }
 
 pub(super) enum Trace<T> {

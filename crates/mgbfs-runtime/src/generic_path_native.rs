@@ -18,7 +18,7 @@ use serde::Deserialize;
 use crate::generic_memory::{self, GenericMemoryPlan};
 use crate::generic_native::{checked, Buffer, GenericAdvance, GenericNativeBfs};
 use crate::generic_run::{Signals, CANCELLED};
-use crate::path_meeting::{decode_meeting, LayerRange, Meeting};
+use crate::path_meeting::{decode_flat_meeting, LayerRange, Meeting};
 
 mod nearest_witness;
 use nearest_witness::{walk_parents, OwnerRow, Receipt, Trace};
@@ -171,7 +171,7 @@ impl QueryTime {
 }
 
 enum Match {
-    Hit { row: u32, label: u32 },
+    Hit { row: u64, label: u32 },
     Missing,
     Stopped(&'static str),
 }
@@ -275,7 +275,10 @@ impl QueryGpu {
                 if row < begin || row - begin >= count {
                     return Err("NATIVE_PATH_LOOKUP_RESULT_BOUNDS".into());
                 }
-                return Ok(Match::Hit { row, label: offset + label });
+                return Ok(Match::Hit {
+                    row: u64::from(row),
+                    label: offset + label,
+                });
             }
             offset += tile;
         }
@@ -347,7 +350,7 @@ impl QueryGpu {
                 }
                 let label = label as u32;
                 let candidate = Match::Hit {
-                    row: start + offset + parent as u32,
+                    row: u64::from(start) + u64::from(offset) + parent,
                     label,
                 };
                 if transitions || label == 0 {
@@ -419,10 +422,11 @@ impl QueryGpu {
         checked!(cudaStreamSynchronize, unsafe {
             cudaStreamSynchronize(stream)
         })?;
-        decode_meeting(best, range, right_layers)
+        decode_flat_meeting(best, range, right_layers)
     }
 
-    fn row_values(&self, bfs: &GenericNativeBfs, row: u32) -> Result<Vec<i64>> {
+    fn row_values(&self, bfs: &GenericNativeBfs, row: u64) -> Result<Vec<i64>> {
+        let row = u32::try_from(row).map_err(|_| "NATIVE_PATH_ROW_BOUNDS")?;
         if row >= bfs.visited_used {
             return Err("NATIVE_PATH_ROW_BOUNDS".into());
         }
@@ -674,6 +678,9 @@ fn search(
     Ok(Receipt::complete(distance as u64, target_index, labels))
 }
 
+const NEAREST_REPLY_WORDS: usize = 4;
+const MEETING_REPLY_WORDS: usize = 5;
+
 pub(crate) fn distributed_workspace(
     width: u64,
     state_bytes: u32,
@@ -689,9 +696,12 @@ pub(crate) fn distributed_workspace(
     let witness = width
         .checked_mul(u64::from(state_bytes))
         .ok_or("NATIVE_PATH_GATHER_SIZE")?;
-    let tx = row
-        .checked_add(if bidirectional { 24 } else { 16 })
-        .ok_or("NATIVE_PATH_GATHER_SIZE")?;
+    let reply_words = if bidirectional {
+        MEETING_REPLY_WORDS
+    } else {
+        NEAREST_REPLY_WORDS
+    };
+    let tx = (reply_words * std::mem::size_of::<i64>()) as u64;
     let rx = tx
         .checked_mul(world as u64)
         .ok_or("NATIVE_PATH_GATHER_SIZE")?;
@@ -728,16 +738,22 @@ fn trace_parents(
     use mgbfs_cuda::generic_graph::GenericPathParent;
 
     let arena = bfs.path_arena()?;
-    let gathered = &mut gathered[..3 * bfs.path_world()];
+    let world = bfs.path_world();
+    let gathered = &mut gathered[..NEAREST_REPLY_WORDS * world];
     let read_parent = |(start, count), OwnerRow { owner, row }| {
-        let mut local = [0; 3];
+        let mut local = [0; NEAREST_REPLY_WORDS];
         let hit = (|| {
             if owner != bfs.path_rank() {
                 return Ok(Match::Missing);
             }
-            if row < start || row - start >= count || row >= arena.visited_used {
+            let physical = u32::try_from(row).map_err(|_| "NATIVE_PATH_PARENT_ROW")?;
+            if physical < start || physical - start >= count || physical >= arena.visited_used {
                 return Err("NATIVE_PATH_PARENT_ROW".into());
             }
+            let offset = (physical as usize)
+                .checked_mul(PARENT_BYTES)
+                .filter(|offset| parents.bytes.saturating_sub(*offset) >= PARENT_BYTES)
+                .ok_or("NATIVE_PATH_PARENT_ROW")?;
             if let Some(reason) = time.stop_reason() {
                 return Ok(Match::Stopped(reason));
             }
@@ -748,7 +764,7 @@ fn trace_parents(
             checked!(cudaMemcpyAsync, unsafe {
                 cudaMemcpyAsync(
                     (&mut parent as *mut GenericPathParent).cast(),
-                    parents.at::<c_void>(row as usize * PARENT_BYTES),
+                    parents.at::<c_void>(offset),
                     PARENT_BYTES,
                     2,
                     arena.stream.ptr,
@@ -759,26 +775,26 @@ fn trace_parents(
             })?;
             let rank = parent.source_label / arena.generators;
             let label = parent.source_label % arena.generators;
-            if rank as usize >= bfs.path_world() || parent.parent == u32::MAX {
+            if rank as usize >= world || parent.parent == u32::MAX {
                 return Err("NATIVE_PATH_PARENT_LINK".into());
             }
-            local[2] = (u64::from(rank) << 32 | u64::from(parent.parent)) as i64;
+            let parent = OwnerRow {
+                owner: rank as usize,
+                row: u64::from(parent.parent),
+            };
+            local[2..].copy_from_slice(&parent.reply_words());
             Ok(Match::Hit { row, label })
         })();
         encode_distributed_match(&mut local, &hit, time);
         bfs.gather_path_words(&local, tx, rx, gathered)?;
-        if let Some(reason) = distributed_stop(gathered, 3, hit.as_ref().err())? {
+        if let Some(reason) = distributed_stop(gathered, NEAREST_REPLY_WORDS, hit.as_ref().err())? {
             return Ok(Trace::Stopped(reason));
         }
-        let link = &gathered[owner * 3..][..3];
+        let link = &gathered[owner * NEAREST_REPLY_WORDS..][..NEAREST_REPLY_WORDS];
         if link[0] != 1 {
             return Err("NATIVE_PATH_PARENT_LINK".into());
         }
-        let target = link[2] as u64;
-        let parent = OwnerRow {
-            owner: (target >> 32) as usize,
-            row: target as u32,
-        };
+        let parent = OwnerRow::from_reply_words([link[2], link[3]], world)?;
         Ok(Trace::Found((parent, link[1] as u32)))
     };
     walk_parents(layers, child, labels, read_parent)
@@ -798,8 +814,7 @@ pub(crate) fn distributed_forward(
         return Err("NATIVE_PATH_TARGETS".into());
     }
     let tile_rows = ((256 << 10) / (width * 8)).max(1);
-    let row_words = width + 2;
-    let gathered_words = row_words
+    let gathered_words = NEAREST_REPLY_WORDS
         .checked_mul(bfs.path_world())
         .ok_or("NATIVE_PATH_GATHER_SIZE")?;
     let setup = (|| {
@@ -807,7 +822,7 @@ pub(crate) fn distributed_forward(
         let parents = Buffer::new(arena.plan.capacity as usize * PARENT_BYTES, arena.device)?;
         let buffers = (
             QueryGpu::new(&arena.plan, (width * 8).max(256 << 10), arena.device, scan)?,
-            Buffer::new(row_words * 8, arena.device)?,
+            Buffer::new(NEAREST_REPLY_WORDS * 8, arena.device)?,
             Buffer::new(gathered_words * 8, arena.device)?,
             parents,
         );
@@ -820,7 +835,7 @@ pub(crate) fn distributed_forward(
             .map_or_else(|| Err("NATIVE_PATH_REMOTE_WORKSPACE".into()), Err);
     }
     let (kernel, tx, rx, parents) = setup?;
-    let mut local = vec![0; row_words];
+    let mut local = [0; NEAREST_REPLY_WORDS];
     let mut gathered = vec![0; gathered_words];
     let mut tile = Vec::with_capacity(tile_rows * width);
     let mut uploaded_tile = None;
@@ -882,30 +897,29 @@ pub(crate) fn distributed_forward(
         })();
         local.fill(0);
         if let Ok(Match::Hit { row, .. }) = hit {
-            local[2] = (u64::from(incoming_label) << 32 | u64::from(row)) as i64;
+            local[2] = row as i64;
+            local[3] = i64::from(incoming_label);
         }
         encode_distributed_match(&mut local, &hit, &time);
-        bfs.gather_path_words(&local[..3], &tx, &rx, &mut gathered[..3 * bfs.path_world()])?;
-        let replies = &gathered[..3 * bfs.path_world()];
-        if let Some(reason) = distributed_stop(replies, 3, hit.as_ref().err())? {
+        bfs.gather_path_words(&local, &tx, &rx, &mut gathered)?;
+        if let Some(reason) = distributed_stop(&gathered, NEAREST_REPLY_WORDS, hit.as_ref().err())? {
             break Receipt::incomplete(reason, None);
         }
         let search_depth = depth + usize::from(capacity_exhausted);
         checked_through = Some(search_depth as u64);
-        if let Some((owner, winner)) = replies
-            .chunks_exact(3)
+        if let Some((owner, winner)) = gathered
+            .chunks_exact(NEAREST_REPLY_WORDS)
             .enumerate()
             .filter(|(_, r)| r[0] == 1)
             .min_by_key(|(_, r)| r[1])
         {
             let index = u32::try_from(winner[1]).map_err(|_| "NATIVE_DISTRIBUTED_PATH_LABEL")?;
-            let reference = winner[2] as u64;
-            let row = reference as u32;
+            let row = winner[2] as u64;
             let mut labels = Vec::with_capacity(search_depth);
             if capacity_exhausted {
                 // The final edge came from the scan of the uncommitted
                 // expansion; its source row is in the last committed layer.
-                labels.push((reference >> 32) as u32);
+                labels.push(u32::try_from(winner[3]).map_err(|_| "NATIVE_DISTRIBUTED_PATH_LABEL")?);
             }
             if let Trace::Stopped(reason) = trace_parents(
                 bfs,
@@ -971,7 +985,7 @@ pub(crate) fn distributed_bidirectional(
     }
     let arena = forward.path_arena()?;
     let width = arena.plan.elements as usize;
-    let stride = width + 3;
+    let stride = MEETING_REPLY_WORDS;
     let words = stride.checked_mul(world).ok_or("NATIVE_PATH_GATHER_SIZE")?;
     let setup = (|| {
         let scan = scanner().ok_or("NATIVE_PATH_CUDA_ABI_UNAVAILABLE")?;
@@ -995,7 +1009,7 @@ pub(crate) fn distributed_bidirectional(
             .unwrap_or_else(|| "NATIVE_PATH_REMOTE_WORKSPACE".into()));
     }
     let (kernel, tx, rx, parents, reverse_parents) = setup?;
-    let mut local = vec![0; stride];
+    let mut local = [0; MEETING_REPLY_WORDS];
     let mut gathered = vec![0; words];
     let time = QueryTime {
         started: Instant::now(),
@@ -1024,9 +1038,7 @@ pub(crate) fn distributed_bidirectional(
                 None
             };
             if let Some(meeting) = meeting {
-                local[2] = meeting.right_depth as i64;
-                local[3] =
-                    (u64::from(meeting.right_row) << 32 | u64::from(meeting.left_row)) as i64;
+                local[2..].copy_from_slice(&meeting.reply_words());
                 Ok(Match::Hit {
                     row: meeting.left_row,
                     label: 0,
@@ -1047,19 +1059,18 @@ pub(crate) fn distributed_bidirectional(
             .filter(|(_, row)| row[0] == 1)
             .min_by_key(|(_, row)| row[2])
         {
+            let meeting = Meeting::from_reply_words([winner[2], winner[3], winner[4]])?;
             let mut witness_depths = depths;
-            witness_depths[opposite] =
-                usize::try_from(winner[2]).map_err(|_| "NATIVE_PATH_MEET_DEPTH")?;
+            witness_depths[opposite] = meeting.right_depth;
             if witness_depths[opposite] > depths[opposite] {
                 return Err("NATIVE_PATH_MEET_DEPTH".into());
             }
             // Every path of length <= f+r intersects the two visited balls.
             // This is the first committed iteration with an intersection.
             let distance = (witness_depths[0] + witness_depths[1]) as u64;
-            let pair = winner[3] as u64;
             let mut meeting_rows = [0; 2];
-            meeting_rows[active] = pair as u32;
-            meeting_rows[opposite] = (pair >> 32) as u32;
+            meeting_rows[active] = meeting.left_row;
+            meeting_rows[opposite] = meeting.right_row;
             let mut labels = [Vec::new(), Vec::new()];
             let mut roots = [OwnerRow { owner: 0, row: 0 }; 2];
             for side in 0..2 {
@@ -1089,7 +1100,8 @@ pub(crate) fn distributed_bidirectional(
                     return Ok(Match::Missing);
                 }
                 let (start, count) = layers[1][0];
-                if row < start || row - start >= count {
+                let start = u64::from(start);
+                if row < start || row - start >= u64::from(count) {
                     return Err("NATIVE_PATH_REVERSE_ROOT".into());
                 }
                 if let Some(reason) = time.stop_reason() {
@@ -1235,7 +1247,7 @@ pub(crate) fn distributed_window_forward(
                             .write_all(&(target_id as u64).to_le_bytes())
                             .map_err(crate::path_csr::io_error)?;
                         terminals
-                            .write_all(&u64::from(row - range.0).to_le_bytes())
+                            .write_all(&(row - u64::from(range.0)).to_le_bytes())
                             .map_err(crate::path_csr::io_error)?;
                     }
                     Match::Missing => {}
@@ -1390,7 +1402,7 @@ pub(crate) fn distributed_window_bidirectional(
                         .write_all(&(index as u64).to_le_bytes())
                         .map_err(crate::path_csr::io_error)?;
                     writer
-                        .write_all(&u64::from(row - range.0).to_le_bytes())
+                        .write_all(&(row - u64::from(range.0)).to_le_bytes())
                         .map_err(crate::path_csr::io_error)?;
                 }
                 Match::Missing => {}
