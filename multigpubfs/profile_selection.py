@@ -266,43 +266,80 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
                 ((entry, arm, profile) for entry in matches for arm, profile in entry["profiles"].items()),
                 key=lambda item: item[2]["bfs_seconds"],
             )
-            baseline = candidates[0][2]
-            fastest = baseline["bfs_seconds"]
-            baseline_peaks = baseline["peak_vram_bytes_by_rank"]
-            if preset == "maxmemory":
-                candidates = [(entry, arm, profile) for entry, arm, profile in candidates
-                              if arm == "max_capacity" and baseline_peaks
-                              and entry["capacity_verification"] == "LOWER_PHYSICAL_PEAK"
-                              and (profile is baseline or max(profile["peak_vram_bytes_by_rank"]) < max(baseline_peaks))
-                              and profile["bfs_seconds"] <= 4 * fastest]
-                candidates.sort(key=lambda item: (
-                    max(item[2]["peak_vram_bytes_by_rank"]), item[2]["bfs_seconds"],
-                ))
-            for entry, arm, profile in candidates[:3]:
+            if preset == "maxmemory" and not any(
+                entry["capacity_verification"] == "LOWER_PHYSICAL_PEAK" for entry in matches
+            ):
+                return None, status
+
+            remaining_probes = 3
+
+            def admit(item):
+                nonlocal remaining_probes, status
+                remaining_probes -= 1
+                _, arm, profile = item
                 profile_timeout(5)
                 recipe_preset = "maxmemory" if arm == "max_capacity" else "balanced"
                 candidate = _compatible_recipe(profile, env, capabilities, packet_address)
                 if candidate is None:
                     status = {"status": "RECIPE_UNAVAILABLE"}
-                    continue
+                    return None
                 memory, settings = candidate
                 admission, refusal = _live_admit(graph, recipe_preset, native, env, capabilities, inventory(),
                                                  memory, settings, profile)
                 if refusal is not None:
                     status = {"status": refusal}
-                    continue
-                status = {
-                    "status": "LIVE_ADMITTED_REGISTRY_PROFILE",
-                    "evidence_sha256": entry["evidence_sha256"],
-                    "requested_preset": preset,
-                    "recipe_preset": recipe_preset,
-                    "historical_verification": entry["capacity_verification"],
-                    "historical_ratio": entry["profiles"]["max_capacity"]["bfs_seconds"] / fastest,
-                    "scope": "FULL_BFS_HISTORICAL_PROFILE",
-                }
-                profile_timeout(5)
-                return RegistryRecipe(memory, settings, profile, recipe_preset, admission), status
-            return None, status
+                    return None
+                return RegistryRecipe(memory, settings, profile, recipe_preset, admission)
+
+            # This is also the recipe a balanced request would launch for the
+            # same matching context. Rejected arms cannot anchor the 4x bound.
+            for index, item in enumerate(candidates[:remaining_probes]):
+                recipe = admit(item)
+                if recipe is not None:
+                    break
+            else:
+                return None, status
+
+            fastest = recipe.evidence["bfs_seconds"]
+            if preset == "maxmemory":
+                baseline = item
+                baseline_peaks = recipe.evidence["peak_vram_bytes_by_rank"]
+                if not baseline_peaks:
+                    return None, {"status": "NO_COMPATIBLE_PROFILE"}
+                peak = max(baseline_peaks)
+                memory_candidates = sorted(
+                    (candidate for candidate in candidates[index:]
+                     if candidate[1] == "max_capacity"
+                     and candidate[0]["capacity_verification"] == "LOWER_PHYSICAL_PEAK"
+                     and (candidate is baseline or max(candidate[2]["peak_vram_bytes_by_rank"]) < peak)
+                     and candidate[2]["bfs_seconds"] <= 4 * fastest),
+                    key=lambda candidate: (max(candidate[2]["peak_vram_bytes_by_rank"]), candidate[2]["bfs_seconds"]),
+                )
+                status = {"status": "NO_COMPATIBLE_PROFILE"}
+                baseline_recipe = recipe
+                for item in memory_candidates:
+                    if item is baseline:
+                        recipe = baseline_recipe
+                        break
+                    if remaining_probes:
+                        recipe = admit(item)
+                        if recipe is not None:
+                            break
+                else:
+                    return None, status
+
+            entry = item[0]
+            status = {
+                "status": "LIVE_ADMITTED_REGISTRY_PROFILE",
+                "evidence_sha256": entry["evidence_sha256"],
+                "requested_preset": preset,
+                "recipe_preset": recipe.preset,
+                "historical_verification": entry["capacity_verification"],
+                "historical_ratio": entry["profiles"]["max_capacity"]["bfs_seconds"] / fastest,
+                "scope": "FULL_BFS_HISTORICAL_PROFILE",
+            }
+            profile_timeout(5)
+            return recipe, status
     except ProfileBudgetExpired:
         return None, {"status": "REGISTRY_STARTUP_DEADLINE"}
     except (OSError, ValueError, TypeError) as error:

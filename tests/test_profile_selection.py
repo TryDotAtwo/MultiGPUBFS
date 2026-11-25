@@ -398,7 +398,8 @@ def test_external_rank_uses_prepared_admission_for_the_native_command(tmp_path, 
         _active.reset(context)
 
 
-def test_registry_capacity_requires_a_lower_peak_than_fastest_balanced(monkeypatch, registry_case):
+@pytest.mark.parametrize("reject_fastest", [False, True])
+def test_registry_capacity_compares_against_fastest_live_recipe(monkeypatch, registry_case, reject_fastest):
     case = registry_case
     catalog = json.loads(case["catalog"].read_bytes())
     first = catalog["entries"][0]
@@ -407,19 +408,38 @@ def test_registry_capacity_requires_a_lower_peak_than_fastest_balanced(monkeypat
     def arm(seconds, peak):
         return dict(profile, bfs_seconds=seconds, peak_vram_bytes_by_rank=[peak] * 2)
 
-    first["profiles"] = {"balanced": arm(1, 100), "max_capacity": arm(1.5, 105)}
+    fastest = arm(1, 100)
+    if reject_fastest:
+        fastest["rank_geometry"] = [dict(rank, free_bytes_at_admission=12 << 30)
+                                     for rank in fastest["rank_geometry"]]
+    first["profiles"] = {"balanced": fastest, "max_capacity": arm(4, 105)}
+    capacity = arm(6 if reject_fastest else 3, 120)
     catalog["entries"].append(dict(first, evidence_sha256="d" * 64,
-                                   profiles={"balanced": arm(2, 200), "max_capacity": arm(3, 120)},
+                                   profiles={"balanced": arm(2, 200), "max_capacity": capacity},
                                    capacity_verification="LOWER_PHYSICAL_PEAK"))
     case["catalog"].write_text(json.dumps(catalog), encoding="utf-8")
+    admitted = []
+
+    def graph_plan(command, *, env, **_):
+        admitted.append(env["MGBFS_MEMORY_PRESET"])
+        return CompletedProcess(command, 0, stdout=json.dumps({"plan": case["plan"], "owner_cuts": case["cuts"]}))
+
     monkeypatch.setattr(native_distribution, "runtime_identity", lambda *_: case["runtime"])
+    monkeypatch.setattr(profile_selection, "query", graph_plan)
     recipe, status = profile_selection.select_registry_recipe(
         {"source": str(case["catalog"]), "sha256": None}, case["graph"], "maxmemory", "fake-native",
         {}, case["capabilities"], time.monotonic() + 5,
         hardware=lambda: (case["inventory"], case["devices"], case["topology"], case["driver"]),
         inventory=lambda: case["inventory"], packet_address=None,
     )
-    assert recipe is None and status["status"] == "NO_COMPATIBLE_PROFILE"
+    if reject_fastest:
+        assert admitted == ["balanced", "max_capacity"]
+        assert recipe.evidence["bfs_seconds"] == 6
+        assert status["historical_ratio"] == 3
+        assert status["evidence_sha256"] == "d" * 64
+    else:
+        assert admitted == ["balanced"]
+        assert recipe is None and status["status"] == "NO_COMPATIBLE_PROFILE"
 
 
 @pytest.mark.parametrize("catalog_source", ["local", "offline-cache", "remote"])
