@@ -378,6 +378,39 @@ def test_concurrent_path_writers_preserve_ordered_target_identity(tmp_path):
     assert len(hub.commits) == 4
 
 
+def test_publish_multipart_paths_in_order_with_a_bound_receipt(tmp_path):
+    hub = LocalHub(tmp_path / "cache")
+    output = tmp_path / "window"
+    report = paths(output)
+    legacy = output / report.pop("path_file")
+    table = pq.read_table(legacy)
+    legacy.unlink()
+    directory = output / "path-parts"
+    directory.mkdir()
+    parts = []
+    for index in range(2):
+        part = directory / f"part-{index:012d}.parquet"
+        pq.write_table(table.slice(index, 1), part)
+        parts.append(part.read_bytes())
+    report.update(path_parts=2, path_bytes=sum(map(len, parts)),
+                  path_sha256=sha(b"".join(hashlib.sha256(part).digest() for part in parts)))
+    saved = output / "report.json"
+    saved.write_bytes(encoded(report))
+
+    result = publish(output, token=False, author="Ivan", api=hub)
+    row, = from_bytes(hub.snapshots[result.revision]["path-queries.parquet"]).to_pylist()
+    staged = hub.snapshots[row["manifest_revision"]]
+    manifest = json.loads(staged[row["manifest_path"]])
+    assert [staged[part["path"]] for part in manifest["parts"]] == parts
+    assert publish(output, token=False, author="Ivan", api=hub) == result
+
+    report["path_sha256"] = "0" * 64
+    saved.write_bytes(encoded(report))
+    with pytest.raises(ValueError, match="checksum or size"):
+        publish(output, token=False, author="Ivan", api=hub)
+    assert hub.head == result.revision
+
+
 def test_incomplete_path_replacement_requires_a_longer_consistent_prefix(tmp_path):
     hub = LocalHub(tmp_path / "cache")
     before, shallower, conflicting, duplicate, missing, better = (

@@ -105,16 +105,16 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
-      - run: python -m pip install '.[cayleypy]' pytest 'pyarrow>=14'
+      - run: python -m pip install '.[cayleypy,atlas]' pytest
       - name: Check the installed wheel outside the checkout
         working-directory: ${{ runner.temp }}
         run: |
           python -m multigpubfs --help
           python -c 'from multigpubfs import open_session; s = open_session(tune="off"); assert s.bfs == s.traverse'
-      - name: Check public sessions, exact routes, Registry, and segmented admission
+      - name: Check public sessions, exact routes, Registry, Atlas, and segmented admission
         run: >-
           python -m pytest -q tests/test_session_api.py tests/test_cluster_session.py
           tests/test_path_search.py tests/test_launch_cli.py
           tests/test_cayleypy_backend.py tests/test_bitmap_pack4_option.py tests/test_segmented_shard_policy.py
           tests/test_segment_strategy.py tests/test_segmented_capacity_policy.py
-          tests/test_profile_registry.py tests/test_profile_selection.py
+          tests/test_profile_registry.py tests/test_profile_selection.py tests/test_atlas.py

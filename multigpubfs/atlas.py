@@ -482,11 +482,36 @@ def _extends_path_coverage(old, new):
 
 def _local_manifest(hub, output, raw, report, query, definition, author):
     file = report.get("path_file")
+    part_count = report.get("path_parts")
     if definition is None:
         raise ValueError("path publication requires graph.json to interpret generator IDs")
     payloads = {}
     parts = []
-    if file is not None:
+    if part_count is not None:
+        from .path_search import _path_part_names
+
+        rows = _part_count(query)
+        if file is not None or type(part_count) is not int or not 2 <= part_count <= rows:
+            raise ValueError("invalid multipart path receipt")
+        expected_size, expected_digest = _natural(report.get("path_bytes")), _hex(report.get("path_sha256"))
+        size = stored_rows = 0
+        digest = hashlib.sha256()
+        for name in _path_part_names(part_count):
+            path = _local_payload(output, name)
+            item = _File(path, _file_digest(path), path.stat().st_size)
+            digest.update(bytes.fromhex(item.sha256))
+            size += item.size
+            count = _path_part_rows(path)
+            if not count:
+                raise ValueError("multipart path artifacts must contain rows")
+            stored_rows += count
+            payloads[name] = item
+            parts.append({"path": name, "sha256": item.sha256, "bytes": item.size})
+        if size != expected_size or digest.hexdigest() != expected_digest:
+            raise ValueError("path artifact checksum or size differs from the receipt")
+        if stored_rows != rows:
+            raise ValueError("path artifact row count differs from the committed receipt")
+    elif file is not None:
         part = _File(
             _local_payload(output, file), _hex(report.get("path_sha256")), _natural(report.get("path_bytes")),
         )

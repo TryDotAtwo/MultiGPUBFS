@@ -2,6 +2,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import errno
+from hashlib import sha256
 from itertools import product
 import json
 import os
@@ -1259,6 +1260,71 @@ def test_output_limit_is_reported_when_empty_parquet_cannot_fit(tmp_path):
     assert result.report["completed_through_length"] is None
     assert result.report["path_count"] == 0
     assert not (tmp_path / "paths.parquet").exists()
+
+
+def test_native_window_parquet_parts_preserve_prefix_on_footer_limit(tmp_path, monkeypatch):
+    from struct import pack
+    from multigpubfs import launch
+    import pyarrow.parquet as pq
+
+    graph = GraphDefinition.permutation([[0]], [7])
+
+    def native(graph, output, **options):
+        if options["_path_window"] is None:
+            return dict(status="COMPLETE", stop_reason=None, d_min=0, target_index=0, generator_ids=[])
+        rank = output / "rank-0"
+        rank.mkdir(parents=True)
+        for depth in range(5):
+            (rank / f"{depth}.targets").write_bytes(pack("<QQ", 0, 0))
+            if depth:
+                csr = rank / f"{depth}.csr"
+                csr.mkdir()
+                (csr / "offsets").write_bytes(pack("<QQ", 0, 1))
+                (csr / "edges").write_bytes(pack("<QII", 0, 0, 0))
+        return path_search._agree_window_receipts([
+            dict(status="COMPLETE", stop_reason=None, graph_completed_through_depth=4,
+                 layer_rows=[1] * 5, lineage_peak_bytes=208, lineage_csr_bytes=128),
+        ], max_length=4)
+
+    monkeypatch.setattr(launch, "run_graph", native)
+    monkeypatch.setattr(path_search, "_PATH_ROW_GROUPS_PER_PART", 2)
+    rejected_lengths = []
+    commit_part = path_search._ParquetPaths._commit_part
+
+    def note_rejection(writer):
+        committed = commit_part(writer)
+        if not committed:
+            rejected_lengths.append(writer.dropped_from_length)
+        return committed
+
+    monkeypatch.setattr(path_search._ParquetPaths, "_commit_part", note_rejection)
+    options = dict(targets=[(7,)], goal_mode="window", extra_steps=4, native=("mgbfs", {}, (0,), True))
+
+    def verify(result, parts, last_length):
+        words = [row["generator_ids"] for row in result.iter_paths()]
+        assert words == [[0] * depth for depth in range(last_length + 1)]
+        assert result.report["path_parts"] == parts and "path_file" not in result.report
+        assert result.report["completed_through_length"] == last_length
+        assert result.report["path_count"] == len(words)
+        assert result.report["counts"] == [{"length": i, "count": 1} for i in range(len(words))]
+        files = [result.output / f"path-parts/part-{index:012d}.parquet" for index in range(parts)]
+        for file in files:
+            with pq.ParquetFile(file) as reader:
+                assert 1 <= reader.metadata.num_row_groups <= 2
+        assert result.report["path_bytes"] == sum(file.stat().st_size for file in files)
+        digest = sha256(b"".join(sha256(file.read_bytes()).digest() for file in files))
+        assert result.report["path_sha256"] == digest.hexdigest()
+        assert sorted(file.name for file in files[0].parent.iterdir()) == [file.name for file in files]
+        assert not (result.output / ".path-parts.tmp").exists()
+
+    full = path_search.solve(graph, output=tmp_path / "full", **options)
+    assert full.status == "COMPLETE"
+    verify(full, 3, 4)
+    byte_limit = full.report["path_bytes"] - 1
+    limited = path_search.solve(graph, output=tmp_path / "limited", max_output_bytes=byte_limit, **options)
+    assert limited.status == "INCOMPLETE" and limited.report["stop_reason"] == "OUTPUT_LIMIT"
+    assert rejected_lengths == [4]
+    verify(limited, 2, 3)
 
 
 @pytest.mark.parametrize("relay_started", [False, True])

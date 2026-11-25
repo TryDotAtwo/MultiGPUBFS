@@ -1,7 +1,7 @@
 """Exact nearest paths and bounded labeled walks on one or more local CUDA GPUs."""
 
 from collections import Counter
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass
 from hashlib import sha256
 import json
@@ -21,6 +21,12 @@ from .specialized import match_lrx
 
 
 _NATIVE_WINDOW_MAX_LENGTH = 0xffff_ffff
+_PATH_ROW_GROUPS_PER_PART = 1024
+
+
+def _path_part_names(count):
+    for index in range(count):
+        yield f"path-parts/part-{index:012d}.parquet"
 
 
 @dataclass(frozen=True)
@@ -35,13 +41,18 @@ class PathSearchResult:
 
     def iter_paths(self):
         """Yield records with target_index, length and forward generator_ids."""
-        if "path_file" not in self.report:
+        if "path_parts" in self.report:
+            files = _path_part_names(self.report["path_parts"])
+        elif "path_file" in self.report:
+            files = (self.report["path_file"],)
+        else:
             return
         import pyarrow.parquet as pq
 
-        with pq.ParquetFile(self.output / self.report["path_file"]) as reader:
-            for batch in reader.iter_batches(batch_size=1024):
-                yield from batch.to_pylist()
+        for file in files:
+            with pq.ParquetFile(self.output / file) as reader:
+                for batch in reader.iter_batches(batch_size=1024):
+                    yield from batch.to_pylist()
 
     def verify_paths(self, cayley_graph):
         """Replay saved words with CayleyPy and return the number checked."""
@@ -240,7 +251,7 @@ def _file_hash(path):
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(1 << 20), b""):
             value.update(block)
-    return value.hexdigest()
+    return value.digest()
 
 
 class _ParquetPaths:
@@ -250,20 +261,32 @@ class _ParquetPaths:
         self.max_bytes = max_bytes
         self.check = check
         self.arrow = arrow
+        self.pq = pq
         self.schema = arrow.schema([
             ("target_index", arrow.int64()),
             ("length", arrow.int64()),
             ("generator_ids", arrow.list_(arrow.int32())),
         ])
         self.staged = output / ".paths.parquet.tmp"
-        self.writer = pq.ParquetWriter(
-            self.staged, self.schema, compression="zstd", write_statistics=False,
-        )
-        self.staged_bytes = self.staged.stat().st_size
+        self.staged_parts = output / ".path-parts.tmp"
         self.pending = []
         self.pending_bytes = 0
         self.counts = Counter()
         self.total = 0
+        self.part_counts = Counter()
+        self.part_count = 0
+        self.path_bytes = 0
+        self.parts_hash = sha256()
+        self.first_part_hash = None
+        self.output_limited = False
+        self.dropped_from_length = None
+        self._open_part()
+
+    def _open_part(self):
+        self.writer = self.pq.ParquetWriter(
+            self.staged, self.schema, compression="zstd", write_statistics=False,
+        )
+        self.staged_bytes = self.staged.stat().st_size
         self.row_groups = 0
 
     def add(self, target, generators):
@@ -274,7 +297,7 @@ class _ParquetPaths:
         # The actual completed file is checked again before it becomes visible.
         size = 32 + 8 * len(generators)
         if self.max_bytes is not None:
-            estimated = self.staged_bytes + 768 + 384 * self.row_groups
+            estimated = self.path_bytes + self.staged_bytes + 768 + 384 * self.row_groups
             if estimated + self.pending_bytes + size > self.max_bytes:
                 raise _Stopped("OUTPUT_LIMIT")
         self.pending.append({
@@ -284,33 +307,78 @@ class _ParquetPaths:
         })
         self.pending_bytes += size
         self.counts[len(generators)] += 1
+        self.part_counts[len(generators)] += 1
         self.total += 1
         if len(self.pending) >= 256 or self.pending_bytes >= 1 << 20:
             self.flush()
 
     def flush(self):
         if self.pending:
+            if self.writer is None:
+                self._open_part()
             self.writer.write_table(self.arrow.Table.from_pylist(self.pending, schema=self.schema))
             self.pending.clear()
             self.pending_bytes = 0
             self.row_groups += 1
             if self.max_bytes is not None:
                 self.staged_bytes = self.staged.stat().st_size
+            if self.row_groups >= _PATH_ROW_GROUPS_PER_PART and not self._commit_part():
+                raise _Stopped("OUTPUT_LIMIT")
+
+    def _commit_part(self):
+        self.writer.close()
+        self.writer = None
+        size = self.staged.stat().st_size
+        if self.max_bytes is not None and self.path_bytes + size > self.max_bytes:
+            self.output_limited = True
+            self.dropped_from_length = min(self.part_counts, default=None)
+            self.total -= self.part_counts.total()
+            self.counts -= self.part_counts
+            self.staged.unlink()
+            self.part_counts.clear()
+            return False
+        digest = _file_hash(self.staged)
+        if not self.part_count:
+            self.staged_parts.mkdir()
+            self.first_part_hash = digest
+        self.staged.replace(self.staged_parts / f"part-{self.part_count:012d}.parquet")
+        self.parts_hash.update(digest)
+        self.part_count += 1
+        self.path_bytes += size
+        self.part_counts.clear()
+        self.row_groups = 0
+        self.staged_bytes = 0
+        return True
 
     def finish(self):
-        self.flush()
-        self.writer.close()
-        size = self.staged.stat().st_size
-        if self.max_bytes is not None and size > self.max_bytes:
-            self.staged.unlink()
+        try:
+            self.flush()
+        except _Stopped:
+            # Rotation already discarded the oversized part and retained its prefix.
+            pass
+        if self.writer is not None:
+            self._commit_part()
+        if self.part_count == 0:
             return None
-        final = self.output / "paths.parquet"
-        self.staged.replace(final)
-        return {"path_file": final.name, "path_bytes": size}
+        if self.part_count == 1:
+            final = self.output / "paths.parquet"
+            (self.staged_parts / "part-000000000000.parquet").replace(final)
+            self.staged_parts.rmdir()
+            return dict(path_file=final.name, path_bytes=self.path_bytes,
+                        path_sha256=self.first_part_hash.hex())
+        self.staged_parts.replace(self.output / "path-parts")
+        return dict(path_parts=self.part_count, path_bytes=self.path_bytes,
+                    path_sha256=self.parts_hash.hexdigest())
 
     def abort(self):
-        self.writer.close()
+        if self.writer is not None:
+            with suppress(OSError):
+                self.writer.close()
         self.staged.unlink(missing_ok=True)
+        if self.staged_parts.exists():
+            for part in self.staged_parts.iterdir():
+                part.unlink()
+            self.staged_parts.rmdir()
 
 
 def _empty_output_dir(output):
@@ -893,12 +961,16 @@ def solve(
     if writer is None:
         return None
     if artifact is not None:
-        artifact["path_sha256"] = _file_hash(output / artifact["path_file"])
         report.update(artifact)
-    else:
-        report.update(status="INCOMPLETE", stop_reason="OUTPUT_LIMIT", completed_through_length=None)
-        writer.counts.clear()
-        writer.total = 0
+    if writer.output_limited:
+        report.update(status="INCOMPLETE", stop_reason="OUTPUT_LIMIT")
+        completed = report["completed_through_length"]
+        dropped = writer.dropped_from_length
+        if artifact is None:
+            report["completed_through_length"] = None
+        elif completed is not None and dropped is not None and dropped <= completed:
+            prefix = dropped - 1
+            report["completed_through_length"] = prefix if prefix >= report["d_min"] else None
     report["counts"] = [{"length": length, "count": count} for length, count in sorted(writer.counts.items())]
     report["path_count"] = writer.total
     report["elapsed_seconds"] = perf_counter() - started
