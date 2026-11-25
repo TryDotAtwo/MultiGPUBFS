@@ -170,16 +170,17 @@ class Cluster:
         from .api import _traversal_exchange_env
         from .distributed_launch import _native_artifact_hashes
         from .launch import (
-            _PACKET_ADDR, _PACKET_BIND, _PACKET_RING, _PACKET_RX, _PATH_SEGMENTED_NEAREST,
+            _PACKET_ADDR, _PACKET_BIND, _PACKET_RING, _PACKET_RX, _PATH_SEGMENTED_NEAREST, _PATH_SEGMENTED_WINDOW,
             _require_memory_backend, run_graph,
         )
         from .memory_admission import resolve_traversal_memory
         from .native_distribution import native_runtime
 
         native, env = native_runtime(job["executable"])
-        if _PATH_SEGMENTED_NEAREST in env:
+        if _PATH_SEGMENTED_NEAREST in env or _PATH_SEGMENTED_WINDOW in env:
             env = dict(env)
-            env.pop(_PATH_SEGMENTED_NEAREST)
+            env.pop(_PATH_SEGMENTED_NEAREST, None)
+            env.pop(_PATH_SEGMENTED_WINDOW, None)
         try:
             capabilities = _require_memory_backend(native, env, "segmented24")
         except RuntimeError as error:
@@ -263,7 +264,7 @@ class Cluster:
         registry = job.get("profile_registry")
         if registry is not None and network:
             from .process_control import ProfileBudgetExpired, profile_budget, profile_timeout
-            from .profile_selection import (cluster_hardware, cluster_rank_hardware, registry_run_receipt,
+            from .profile_selection import (RegistryRecipe, cluster_hardware, cluster_rank_hardware, registry_run_receipt,
                                             select_registry_recipe)
 
             # Inventory is required by either policy. Bound the optional phase separately.
@@ -293,9 +294,9 @@ class Cluster:
                 )
                 resolved = None
                 if recipe is not None:
-                    memory, settings, expected, launch_preset = recipe
-                    resolved = {"memory": vars(memory), "settings": settings, "geometry": expected,
-                                "preset": launch_preset}
+                    resolved = {"memory": vars(recipe.memory), "settings": recipe.settings,
+                                "geometry": recipe.evidence, "preset": recipe.preset,
+                                "admission": recipe.admission}
                 self.store.put(prefix + "profile-selection", {"recipe": resolved, "receipt": profile_status})
             else:
                 # Only the coordinator may choose a recipe or the fallback for this job.
@@ -305,8 +306,8 @@ class Cluster:
                     from .memory_admission import TraversalMemory
 
                     payload = profile["recipe"]
-                    recipe = (TraversalMemory(**payload["memory"]), payload["settings"], payload["geometry"],
-                              payload["preset"])
+                    recipe = RegistryRecipe(TraversalMemory(**payload["memory"]), payload["settings"],
+                                            payload["geometry"], payload["preset"], payload["admission"])
         launch_preset = preset
         if recipe is None:
             memory = resolve_traversal_memory(
@@ -314,8 +315,8 @@ class Cluster:
                 default_backend="segmented24" if network else "legacy",
             )
         else:
-            memory, settings, expected, launch_preset = recipe
-            env = dict(env, **settings)
+            memory, expected, launch_preset = recipe.memory, recipe.evidence, recipe.preset
+            env = dict(env, **recipe.settings)
             autotune = False
         if network:
             env = _traversal_exchange_env(
@@ -323,10 +324,16 @@ class Cluster:
                 self._packet_address if self.placement.packet_port is not None else None,
                 packet_slots=packet_slots, external=True,
             )
+        prepared = {}
+        if world > 1 and network:
+            if inventory is not None:
+                prepared["_external_inventory"] = inventory
+            if recipe is not None:
+                prepared["_external_admission"] = {"plan": recipe.admission, "artifacts": artifacts}
         report = run_graph(graph, output, device=self._local_device(),
                            executable=native, backend="generic", memory_backend=memory.backend,
                            memory_preset=launch_preset, segment_strategy=memory.strategy, _native_env=env,
-                           autotune=autotune, max_seconds=job["max_seconds"], **memory.launch_options)
+                           autotune=autotune, max_seconds=job["max_seconds"], **memory.launch_options, **prepared)
         report["cluster_memory_backend"] = memory.backend
         report["cluster_memory_selection_reason"] = memory.reason
         if profile_status is not None:

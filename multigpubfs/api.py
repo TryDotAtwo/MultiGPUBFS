@@ -403,8 +403,8 @@ class BfsSession:
                 memory, capabilities = self._memory_policy(graph, devices, native, env, preset, manual,
                                                            inventory=inventory)
             else:
-                memory, settings, expected, launch_preset = recipe
-                env = dict(env, **settings)
+                memory, expected, launch_preset = recipe.memory, recipe.evidence, recipe.preset
+                env = dict(env, **recipe.settings)
             backend = memory.backend
             manual = memory.launch_options
             transport = manual.pop("transport", None)

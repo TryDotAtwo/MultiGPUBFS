@@ -276,12 +276,18 @@ def test_cluster_coordinator_admits_one_recipe_for_all_ranks(tmp_path, monkeypat
     capabilities = dict(case["capabilities"], segmented_network_agreement_v1=True)
     by_device = {row["device"]: row for row in case["inventory"]}
     plans, runs = [], {}
+    native_admission = {
+        "graph_digest": case["graph"].digest(), "inventory": case["inventory"],
+        "devices": list(case["devices"]), "plan": dict(case["plan"], world=2),
+        "rank_plans": [dict(case["plan"], world=2, rank=rank) for rank in range(2)],
+        "owner_cuts": case["cuts"], "additional_reserve_bytes": case["reserve"],
+    }
 
     def graph_plan(command, *, env, resident, **_):
         assert json.loads(Path(command[3]).read_text(encoding="utf-8")) == case["inventory"]
         assert not resident and env["MGBFS_GENERIC_VRAM_RESERVE_BYTES"] == str(case["reserve"])
         plans.append(env)
-        return CompletedProcess(command, 0, stdout=json.dumps({"plan": case["plan"], "owner_cuts": case["cuts"]}))
+        return CompletedProcess(command, 0, stdout=json.dumps(native_admission))
 
     def dispatch(self, job, output):
         assert self is peers[0]
@@ -310,6 +316,7 @@ def test_cluster_coordinator_admits_one_recipe_for_all_ranks(tmp_path, monkeypat
     session = open_session(gpus=2, profile_registry=case["catalog"], profile_registry_sha256=case["pin"])
     reports = peers[0].traverse(session, case["graph"], tmp_path / "cluster", "balanced", None)
     assert set(runs) == set(case["devices"])
+    assert all(run["_external_inventory"] == case["inventory"] for run in runs.values())
     if metadata_timeout:
         assert not plans
         assert all(report["cluster_profile_registry"]["status"] == "REGISTRY_STARTUP_DEADLINE" for report in reports)
@@ -321,6 +328,74 @@ def test_cluster_coordinator_admits_one_recipe_for_all_ranks(tmp_path, monkeypat
         assert report["cluster_profile_registry"]["runtime_geometry"] == "CHANGED"
         assert (run["autotune"], run["shards"], run["_batch"], run["segment_strategy"]) == (False, 3, 2, "batch")
         assert run["_native_env"]["MGBFS_SEGMENT_OWNER_LANES"] == plans[0]["MGBFS_SEGMENT_OWNER_LANES"] == "2"
+        assert run["_external_admission"] == {"plan": native_admission, "artifacts": {"native": "bin", "cuda": "so"}}
+
+
+def test_external_rank_uses_prepared_admission_for_the_native_command(tmp_path, monkeypatch, registry_case):
+    from multigpubfs.cluster import _active
+    from multigpubfs import host_memory
+
+    case = registry_case
+    inventory = case["inventory"]
+    device = case["devices"][0]
+    plan = dict(case["plan"], world=2)
+    admission = {
+        "graph_digest": case["graph"].digest(), "inventory": inventory,
+        "devices": list(case["devices"]), "plan": plan, "rank_plans": [plan, plan],
+        "owner_cuts": case["cuts"], "additional_reserve_bytes": case["reserve"],
+    }
+
+    class NativeCommandObserved(Exception):
+        pass
+
+    class Store:
+        def __init__(self, *args):
+            self.values = {}
+
+        def put(self, key, value):
+            self.values[key] = value
+
+        def get(self, key):
+            return self.values["identity/0" if key == "identity/1" else key]
+
+        def report_error(self, error, world):
+            assert isinstance(error, NativeCommandObserved)
+
+        def close(self):
+            pass
+
+    def launch_rank(command, env, log):
+        assert command[1] == "graph-rank" and command[4] == "0"
+        config = json.loads(Path(command[3]).read_text(encoding="utf-8"))
+        assert config == dict(admission, max_seconds=None)
+        assert env["MGBFS_GENERIC_VRAM_RESERVE_BYTES"] == str(case["reserve"])
+        raise NativeCommandObserved()
+
+    def redundant_admission(*args, **kwargs):
+        pytest.fail("Production queried inventory or recalculated the admitted plan")
+
+    worker = Cluster(Placement(0, device, 2, "127.0.0.1", 1, 2, 3, "native-plan"), None, tmp_path)
+    monkeypatch.setattr(worker, "inventory", redundant_admission)
+    monkeypatch.setattr(worker, "launch_rank", launch_rank)
+    monkeypatch.setattr(distributed_launch, "native_query", redundant_admission)
+    monkeypatch.setattr(distributed_launch, "ControlStore", Store)
+    monkeypatch.setattr(distributed_launch, "_native_artifact_hashes", lambda *_: {"native": "bin", "cuda": "so"})
+    monkeypatch.setattr(host_memory, "admit", lambda *args: {})
+    monkeypatch.setattr(launch, "native_runtime", lambda executable: ("test-native", {}))
+    monkeypatch.setattr(launch, "_require_memory_backend",
+                        lambda *args: dict(case["capabilities"], segmented_network_agreement_v1=True))
+    for key, value in {"RANK": "0", "LOCAL_RANK": str(device), "WORLD_SIZE": "2",
+                       "MASTER_ADDR": "127.0.0.1", "MASTER_PORT": "43123"}.items():
+        monkeypatch.setenv(key, value)
+    context = _active.set(worker)
+    try:
+        with pytest.raises(NativeCommandObserved):
+            launch.run_graph(case["graph"], tmp_path / "traversal", device=device, shards=3, _batch=2,
+                             executable="test-native", memory_backend="segmented24", segment_strategy="batch",
+                             autotune=False, _native_env={}, _external_inventory=inventory,
+                             _external_admission={"plan": admission, "artifacts": {"native": "bin", "cuda": "so"}})
+    finally:
+        _active.reset(context)
 
 
 def test_registry_capacity_requires_a_lower_peak_than_fastest_balanced(monkeypatch, registry_case):

@@ -5,10 +5,21 @@ import os
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 from .artifact_paths import artifact_path
+from .memory_admission import TraversalMemory
 from .process_control import ProfileBudgetExpired, profile_budget, profile_timeout, query
+
+
+@dataclass(frozen=True)
+class RegistryRecipe:
+    memory: TraversalMemory
+    settings: dict
+    evidence: dict
+    preset: str
+    admission: dict
 
 
 def registry_source(source, sha256, env):
@@ -57,8 +68,6 @@ def cluster_rank_hardware(env, host):
 
 
 def _compatible_recipe(profile, env, capabilities, packet_address):
-    from .memory_admission import TraversalMemory
-
     backend = profile["memory_backend"]
     strategy = profile["strategy"]
     codec = profile["resident_codec"]
@@ -138,10 +147,10 @@ def _live_admit(graph, preset, native, env, capabilities, inventory, memory, set
     from .launch import _apply_memory_preset
 
     if any(rank.get("capacity_limit_per_rank") is not None for rank in profile["rank_geometry"]):
-        return "EXPLICIT_CAPACITY_RECIPE"
+        return None, "EXPLICIT_CAPACITY_RECIPE"
     minimum = [rank.get("free_bytes_at_admission") for rank in profile["rank_geometry"]]
     if any(floor is not None and now["free_bytes"] < floor for now, floor in zip(inventory, minimum)):
-        return "RECIPE_VRAM_PRESSURE"
+        return None, "RECIPE_VRAM_PRESSURE"
     planning = _apply_memory_preset(dict(env, **settings), memory.backend,
                                     "max_capacity" if preset == "maxmemory" else "balanced")
     planning.update(MGBFS_EXPERIMENTAL_SEGMENTED24="1", MGBFS_GENERIC_HISTORY="hash",
@@ -150,7 +159,7 @@ def _live_admit(graph, preset, native, env, capabilities, inventory, memory, set
     try:
         planning = _match_resident_reserve(planning, inventory)
     except RuntimeError:
-        return "RECIPE_RESERVE_CONSENSUS"
+        return None, "RECIPE_RESERVE_CONSENSUS"
     if memory.backend == "permutation_bitmap":
         planning["MGBFS_EXPERIMENTAL_BITMAP"] = "1"
         orbital = capabilities.get("permutation_bitmap_position_orbits_v1") is True
@@ -165,7 +174,7 @@ def _live_admit(graph, preset, native, env, capabilities, inventory, memory, set
                         str(profile["shards"]), "auto", str(profile["batch"])],
                        env=planning, resident=False, capture_output=True, text=True)
     if result.returncode:
-        return "RECIPE_REJECTED_BY_LIVE_ADMISSION"
+        return None, "RECIPE_REJECTED_BY_LIVE_ADMISSION"
     admission = json.loads(result.stdout)
     plan = admission["plan"]
     defaults = {"compact_transport": False, "compact_route_lookahead": False,
@@ -174,8 +183,8 @@ def _live_admit(graph, preset, native, env, capabilities, inventory, memory, set
             ("shards", "batch", "history_layers", "state_bytes", *defaults))
             or plan["queue_capacity"] < profile["queue_capacity"]
             or profile["owner_cuts"] is not None and admission.get("owner_cuts") != profile["owner_cuts"]):
-        return "RECIPE_LIVE_GEOMETRY_CHANGED"
-    return None
+        return None, "RECIPE_LIVE_GEOMETRY_CHANGED"
+    return admission, None
 
 
 def registry_run_receipt(status, expected, report):
@@ -277,8 +286,8 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
                     status = {"status": "RECIPE_UNAVAILABLE"}
                     continue
                 memory, settings = candidate
-                refusal = _live_admit(graph, recipe_preset, native, env, capabilities, inventory(),
-                                      memory, settings, profile)
+                admission, refusal = _live_admit(graph, recipe_preset, native, env, capabilities, inventory(),
+                                                 memory, settings, profile)
                 if refusal is not None:
                     status = {"status": refusal}
                     continue
@@ -292,7 +301,7 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
                     "scope": "FULL_BFS_HISTORICAL_PROFILE",
                 }
                 profile_timeout(5)
-                return (memory, settings, profile, recipe_preset), status
+                return RegistryRecipe(memory, settings, profile, recipe_preset, admission), status
             return None, status
     except ProfileBudgetExpired:
         return None, {"status": "REGISTRY_STARTUP_DEADLINE"}

@@ -73,7 +73,7 @@ def _native_rank_failure(code, rank, job, log_path):
     return RuntimeError(f'{message}: {detail}' if detail else message)
 
 
-def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,shards,autotune,batch=None,path_targets=None,path_bidirectional=False,path_window=None,path_max_depth=None):
+def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,shards,autotune,batch=None,path_targets=None,path_bidirectional=False,path_window=None,path_max_depth=None,inventory_snapshot=None,admitted_plan=None):
  from .launch import (_PACKET_ADDR,_PACKET_RING,_PACKET_RX,_PATH_COMPACT,_PACKET_ENV,
                       _PATH_SEGMENTED_NEAREST,_PATH_SEGMENTED_WINDOW,_compact_path_env,_rank_launch_config,
                       _receipt,_with_packet_job_token)
@@ -85,6 +85,9 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
  if not 1<world<=128 or not 0<=rank<world:raise ValueError('EXTERNAL_RANK_RANGE')
  device=local if devices is None else devices[0]
  if devices is not None and len(devices)!=1:raise ValueError('EXTERNAL_RANK_REQUIRES_ONE_LOCAL_DEVICE')
+ if inventory_snapshot is not None and (
+     not resident_admission or len(inventory_snapshot)!=world or inventory_snapshot[rank]['device']!=device):
+  raise RuntimeError('EXTERNAL_INVENTORY_SNAPSHOT_MISMATCH')
  output=Path(output).absolute()
  if output.exists():raise FileExistsError(output)
  output.parent.mkdir(parents=True,exist_ok=True)
@@ -102,7 +105,18 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
   store.put(f'host-memory/{rank}',host_memory)
   with tempfile.TemporaryDirectory(prefix=f'mgbfs-rank-{rank}-',dir=output.parent) as directory:
    temporary=Path(directory);definition=temporary/'graph.json';definition.write_text(graph.to_json())
-   identity={'graph':digest,'world':world,'capacity':capacity,'seconds':max_seconds,'shards':shards,'autotune':autotune,'transport':native_env.get('MGBFS_GENERIC_TRANSPORT'),'candidate_order':native_env.get('MGBFS_GENERIC_SORT'),'history_algorithm':native_env.get('MGBFS_GENERIC_HISTORY','hash'),'owner_lanes':native_env.get('MGBFS_GENERIC_OWNER_LANES','1'),'generator_backend':native_env.get('MGBFS_GENERIC_GENERATOR','cuda'),'gemm_variant':native_env.get('MGBFS_GEMM_VARIANT','auto'),**_native_artifact_hashes(native,native_env)}
+   artifacts=_native_artifact_hashes(native,native_env)
+   if admitted_plan is not None:
+    binding=admitted_plan
+    admitted_plan=binding['plan']
+    if (inventory_snapshot is None or not segmented or path_targets is not None or capacity is not None
+        or binding['artifacts']!=artifacts or admitted_plan['graph_digest']!=digest
+        or admitted_plan['inventory']!=inventory_snapshot
+        or admitted_plan['devices']!=[item['device'] for item in inventory_snapshot]
+        or admitted_plan['plan']['world']!=world
+        or admitted_plan['plan']['shards']!=shards or admitted_plan['plan']['batch']!=batch):
+     raise RuntimeError('EXTERNAL_ADMISSION_SNAPSHOT_MISMATCH')
+   identity={'graph':digest,'world':world,'capacity':capacity,'seconds':max_seconds,'shards':shards,'autotune':autotune,'transport':native_env.get('MGBFS_GENERIC_TRANSPORT'),'candidate_order':native_env.get('MGBFS_GENERIC_SORT'),'history_algorithm':native_env.get('MGBFS_GENERIC_HISTORY','hash'),'owner_lanes':native_env.get('MGBFS_GENERIC_OWNER_LANES','1'),'generator_backend':native_env.get('MGBFS_GENERIC_GENERATOR','cuda'),'gemm_variant':native_env.get('MGBFS_GEMM_VARIANT','auto'),**artifacts}
    identity['batch']=batch
    if path_targets is not None:
     identity['path_bidirectional']=path_bidirectional
@@ -128,6 +142,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     store.put('identity-ready',True)
    store.get('identity-ready')
    def inventories(label):
+    if inventory_snapshot is not None:return inventory_snapshot
     if resident_admission:
      inventory_env=native_env
      if segmented_nearest or segmented_window:
@@ -177,11 +192,13 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     result=store.get(label+'/admitted')
     if 'error' in result:raise RuntimeError(result['error'])
     return result['value']
-   def phase(label,count,requested,batch_fraction,seconds,depth=None,transport=None,order=None,history=None,lanes=None,generator=None):
+   def phase(label,count,requested,batch_fraction,seconds,depth=None,transport=None,order=None,history=None,lanes=None,generator=None,prepared=None):
     phase_env=_phase_environment(native_env,transport,order,history,lanes,generator)
-    inventory=inventories(label)
-    config=admit(label,inventory,count,requested,batch if label=='production' else None,transport=transport,order=order,history=history,lanes=lanes,generator=generator)
-    if batch_fraction!=1.0:config=admit(label+'-batch',inventory,count,requested,max(1,int(config['plan']['batch']*batch_fraction)),transport=transport,order=order,history=history,lanes=lanes,generator=generator)
+    config=prepared
+    if config is None:
+     inventory=inventories(label)
+     config=admit(label,inventory,count,requested,batch if label=='production' else None,transport=transport,order=order,history=history,lanes=lanes,generator=generator)
+     if batch_fraction!=1.0:config=admit(label+'-batch',inventory,count,requested,max(1,int(config['plan']['batch']*batch_fraction)),transport=transport,order=order,history=history,lanes=lanes,generator=generator)
     if rank==0:
      config=_rank_launch_config(
       config,digest,bitmap=segmented and native_env.get('MGBFS_EXPERIMENTAL_BITMAP')=='1',depth=depth,
@@ -235,11 +252,16 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
       time.sleep(.02 if segmented and (not bootstrap_done or host_phase.startswith('segmented-host-')) else .05)
      if job.returncode:raise _native_rank_failure('EXTERNAL_NATIVE_RANK_FAILED',rank,job,log.name)
     finally:
-     if job is not None and job.poll() is None:
-      job.terminate()
-      try:job.wait(timeout=10)
-      except subprocess.TimeoutExpired:job.kill();job.wait()
-     log.close()
+     try:
+      if job is not None:
+       if job.poll() is None:job.terminate()
+       try:job.wait(timeout=10)
+       except subprocess.TimeoutExpired:
+        job.kill()
+        try:job.wait(timeout=5)
+        except subprocess.TimeoutExpired as error:
+         raise RuntimeError('EXTERNAL_NATIVE_RANK_CLEANUP_TIMEOUT_NO_RESTART') from error
+     finally:log.close()
     if path_targets is not None:
      local=json.loads((folder/f'rank-{rank}'/'path.json').read_text(encoding='utf-8'))
      from .generic_session import path_workspace
@@ -298,11 +320,12 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
      store.put('segmented-shards',geometry['target_shards'])
     shards=store.get('segmented-shards')
     while shards>1:
-     try:admit(f'segmented-admit-{shards}',inventory,shards,capacity)
+     try:admitted_plan=admit(f'segmented-admit-{shards}',inventory,shards,capacity,batch)
      except RuntimeError as error:
       if not any(code in str(error) for code in ('GENERIC_DISTRIBUTED_HEADROOM','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_VRAM_CAPACITY')):raise
       shards=max(1,shards//2)
      else:break
+    if shards==1:admitted_plan=baseline if batch is None else admit('segmented-admit-1',inventory,1,capacity,batch)
    if not segmented and shards is None and autotune and (max_seconds is None or max_seconds>=10):
     inventory=inventories('profile-admission')
     from .hardware_profiles import startup_policy
@@ -334,7 +357,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     profile['reserve_generator_backend']='gemm' if gemm_supported(graph) and all(store.get('profile-admission'+f'/gemm/{i}') and store.get('profile-admission'+f'/size-profile/{i}') for i in range(world)) else profile.get('generator_backend','cuda')
     profile['online_size_tuning']=True
    shards=shards if shards is not None else (profile['shards'] if profile else 1)
-   remaining=remaining_work(max_seconds,time.monotonic()-started);result=phase('production',shards,capacity,profile['batch_fraction'] if profile else 1.0,remaining,transport=profile['transport'] if profile else native_env.get('MGBFS_GENERIC_TRANSPORT'),order=profile['candidate_order'] if profile else native_env.get('MGBFS_GENERIC_SORT'),history=('sorted' if profile['history_algorithm']=='SORTED_RUNS' else 'hash') if profile else native_env.get('MGBFS_GENERIC_HISTORY'),lanes=profile['owner_lanes'] if profile and profile['history_algorithm']=='SORTED_RUNS' else None,generator=profile.get('reserve_generator_backend',profile.get('generator_backend','cuda')) if profile else native_env.get('MGBFS_GENERIC_GENERATOR'))
+   remaining=remaining_work(max_seconds,time.monotonic()-started);result=phase('production',shards,capacity,profile['batch_fraction'] if profile else 1.0,remaining,transport=profile['transport'] if profile else native_env.get('MGBFS_GENERIC_TRANSPORT'),order=profile['candidate_order'] if profile else native_env.get('MGBFS_GENERIC_SORT'),history=('sorted' if profile['history_algorithm']=='SORTED_RUNS' else 'hash') if profile else native_env.get('MGBFS_GENERIC_HISTORY'),lanes=profile['owner_lanes'] if profile and profile['history_algorithm']=='SORTED_RUNS' else None,generator=profile.get('reserve_generator_backend',profile.get('generator_backend','cuda')) if profile else native_env.get('MGBFS_GENERIC_GENERATOR'),prepared=admitted_plan)
    if profile:profile['online_size_tuning']=result.get('size_profile_count',0)>0;result['autotune']=profile;(output/'report.json').write_text(json.dumps(result,indent=2))
    store.put(f'finished/{rank}',True)
    if rank==0:
