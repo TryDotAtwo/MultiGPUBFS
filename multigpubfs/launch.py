@@ -438,7 +438,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    # Legacy graph-info capacity is only used to size bounded transport; it
    # must not become an implicit rank-wide segment capacity.
    capacity=None
- communication=None
+ communication=None;selected=None
  if _profile_layers is None and not external and not backend.startswith('shard_ab_'):
   if Path(output).exists():raise FileExistsError(output)
   selected=devices
@@ -446,6 +446,17 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    count=native_query([native,'graph-count'],env=native_env,capture_output=True,text=True)
    if count.returncode:raise RuntimeError('NATIVE_GPU_DISCOVERY_FAILED: '+count.stderr[-4000:])
    selected=list(range(int(count.stdout.strip())))
+ cold_geometry=None
+ if (segmented and _path_targets is None and _profile_layers is None and exchange_capable
+     and shards is None and _batch is None and segment_rows is None
+     and (not autotune or _profile_options is None or _profile_options.get('pilot_limit') is not None)):
+  from .shard_policy import balanced_pack4_geometry
+  world=int(os.environ['WORLD_SIZE']) if external else len(selected or ())
+  cold_geometry=balanced_pack4_geometry(graph,world,native_env)
+  if cold_geometry is not None:
+   native_env['MGBFS_SEGMENT_EXACT_EXCHANGE']='1'
+   autotune=False
+ if selected is not None:
   path_compact=_path_targets is not None and (segmented_path or native_env.get(_PATH_COMPACT)=='1')
   if path_compact:
    native_env=_compact_path_env(native,native_env,len(selected),_path_bidirectional,external=False)
@@ -499,6 +510,9 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
     bind_communication_group(_active)
   if geometry_bound is not None:report['workload_geometry_bound']=geometry_bound
   if shard_geometry is not None:report['shard_geometry']=shard_geometry
+  if cold_geometry is not None:
+   report['startup_geometry']=dict(cold_geometry,admitted_shards=report['plan']['shards'],
+                                   admitted_source_batch=report['plan']['batch'])
   from .size_profiles import save_online_profiles
   online_cache_status=save_online_profiles(report)
   if online_cache_status is not None:report['online_profile_cache_write_status']=online_cache_status
@@ -514,7 +528,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   from .distributed_launch import run_external
   if _path_targets is not None:
    return run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune,batch=_batch,path_targets=_path_targets,path_bidirectional=_path_bidirectional,path_window=_path_window,path_max_depth=_path_max_depth)
-  return finish(run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune,batch=_batch))
+  return finish(run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune,batch=_batch,cold_geometry=cold_geometry))
  output=Path(output).absolute()
  if output.exists():raise FileExistsError(output)
  profile=None
@@ -545,8 +559,11 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   elif segmented:
    from .autotune import _segmented_shard_plan
    with tempfile.TemporaryDirectory(prefix='mgbfs-segment-shards-') as shard_dir:
-    shard_geometry,_=_segmented_shard_plan(graph,devices,capacity,native,native_env,shard_dir)
+    minimum_shards=1 if cold_geometry is None else cold_geometry['minimum_shards']
+    shard_geometry,geometry_admission=_segmented_shard_plan(graph,devices,capacity,native,native_env,shard_dir,minimum_shards=minimum_shards)
    shards=shard_geometry['admitted_shards']
+   if cold_geometry is not None:
+    _batch=min(cold_geometry['source_batch_cap'],geometry_admission['plan']['batch'])
   else:shards=1
  output=Path(output).absolute()
  if output.exists():raise FileExistsError(output)

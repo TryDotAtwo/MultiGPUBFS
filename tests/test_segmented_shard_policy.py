@@ -52,6 +52,50 @@ def test_small_graph_remains_one_shard():
     p=choose_segmented_shards(coxeter(4),admission(n=4,world=2))
     assert p['target_shards']==1,p
 
+def test_large_pack4_balanced_bounds_production_geometry(tmp_path, monkeypatch):
+    import subprocess
+    import pytest
+    from multigpubfs import autotune, host_memory, launch, nccl_preflight
+
+    graph = coxeter(13)
+    hardware = admission(n=13, world=2, free=9751 << 20)
+    hardware['plan']['batch'] = 87_381
+    probed = []
+
+    def admit_shards(graph, devices, capacity, shards, native, env, directory):
+        probed.append(shards)
+        assert env['MGBFS_SEGMENT_EXACT_EXCHANGE'] == '1'
+        return hardware
+
+    def production_probe(command, *, env, **_):
+        assert command[1] == 'graph-info' and command[-3:] == ['8', 'auto', '8192']
+        assert env['MGBFS_SEGMENT_EXACT_EXCHANGE'] == '1'
+        return subprocess.CompletedProcess(command, 1, '', 'CPU_FIXTURE_PRODUCTION_REACHED')
+
+    monkeypatch.setattr(launch, 'native_runtime', lambda _: ('mgbfs', {}))
+    monkeypatch.setattr(launch, '_require_memory_backend', lambda *_: {
+        'segmented_exact_exchange_v1': True, 'bitmap_pack4_experimental_v1': True,
+    })
+    monkeypatch.setattr(host_memory, 'admit', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(launch, 'native_query', production_probe)
+    monkeypatch.setattr(nccl_preflight, 'prepare', lambda native, devices, env, output, graph: (env, None))
+    monkeypatch.setattr(autotune, '_admit', admit_shards)
+    with pytest.raises(RuntimeError, match='CPU_FIXTURE_PRODUCTION_REACHED'):
+        launch.run_graph(graph, tmp_path / 'out', devices=[0, 1], memory_backend='permutation_bitmap',
+                         bitmap_pack4=True, _profile_options={'pilot_limit': 3})
+    assert probed == [1, 8]
+
+
+def test_pack4_geometry_keeps_other_workloads_and_explicit_knobs():
+    from multigpubfs.shard_policy import balanced_pack4_geometry
+
+    env = {'MGBFS_MEMORY_PRESET': 'balanced', 'MGBFS_EXPERIMENTAL_BITMAP': '1',
+           'MGBFS_SEGMENT_PACK4': '1', 'MGBFS_SEGMENT_STRATEGY': 'atomic'}
+    assert balanced_pack4_geometry(coxeter(12), 2, env) is None
+    assert balanced_pack4_geometry(coxeter(13), 1, env) is None
+    assert balanced_pack4_geometry(coxeter(13), 2, dict(env, MGBFS_MEMORY_PRESET='max_capacity')) is None
+    assert balanced_pack4_geometry(coxeter(13), 2, dict(env, MGBFS_SEGMENT_QUEUE_CAP='2048')) is None
+
 def test_insufficient_memory_caps_shard_work_without_claiming_fit():
     p=choose_segmented_shards(coxeter(14),admission(free=12<<30))
     assert 1<=p['target_shards']<128,p

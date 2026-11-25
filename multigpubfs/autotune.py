@@ -142,7 +142,7 @@ def _segmented_deep_prefix_candidates(pilots):
  excluded=[dict(p,completed_depth=len(p['layer_seconds']),minimum_comparable_depth=threshold,reason='SHORT_COMMON_PREFIX_RELATIVE_TO_BEST_COMPLETED_DEPTH') for p in pilots if len(p['layer_seconds'])<threshold]
  return deep,excluded
 
-def _segmented_shard_plan(graph,devices,capacity,native,env,directory,baseline=None,fixed_shards=None):
+def _segmented_shard_plan(graph,devices,capacity,native,env,directory,baseline=None,fixed_shards=None,*,minimum_shards=1):
  from .shard_policy import choose_segmented_shards
  if baseline is None:baseline=_admit(graph,devices,capacity,fixed_shards or 1,native,env,directory)
  try:target_rows=int(env.get('MGBFS_SEGMENT_SHARD_TARGET_ROWS',str(1<<32)))
@@ -151,7 +151,7 @@ def _segmented_shard_plan(graph,devices,capacity,native,env,directory,baseline=N
  except (TypeError,ValueError):raise ValueError('INVALID_SEGMENT_RANK_LIMIT') from None
  try:segment_rows=int(env.get('MGBFS_SEGMENT_ROWS',env.get('MGBFS_SEGMENT_MAX_ROWS',str(1<<32))))
  except (TypeError,ValueError):raise ValueError('INVALID_SEGMENT_ROWS') from None
- geometry=choose_segmented_shards(graph,baseline,bitmap=env.get('MGBFS_EXPERIMENTAL_BITMAP')=='1',target_rows=min(target_rows,segment_rows),rank_limit=rank_limit,env=env)
+ geometry=choose_segmented_shards(graph,baseline,bitmap=env.get('MGBFS_EXPERIMENTAL_BITMAP')=='1',target_rows=min(target_rows,segment_rows),rank_limit=rank_limit,env=env,minimum_shards=minimum_shards)
  if fixed_shards is not None:
   geometry.update(admitted_shards=fixed_shards,shards_fixed_by_user=True,admission_rejections=[])
   return geometry,baseline

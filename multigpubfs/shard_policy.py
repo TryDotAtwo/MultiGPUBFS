@@ -72,8 +72,33 @@ def _ceil_div(a,b):
     return (a+b-1)//b
 
 
+def balanced_pack4_geometry(graph, world, env):
+    """Cold starting geometry for large banked Pack4 traversals on two ranks."""
+    if (world != 2 or env.get('MGBFS_MEMORY_PRESET') != 'balanced'
+            or env.get('MGBFS_EXPERIMENTAL_BITMAP') != '1'
+            or env.get('MGBFS_SEGMENT_PACK4') != '1'
+            or env.get('MGBFS_SEGMENT_STRATEGY') != 'atomic'
+            or env.get('MGBFS_SEGMENT_EXACT_EXCHANGE', '1') != '1'
+            or env.get('MGBFS_BITMAP_BANKS', '3') != '3'
+            or env.get('MGBFS_SEGMENT_BITMAP_OWNER_PAGE', '0') != '0'
+            or any(key in env for key in ('MGBFS_SEGMENT_PACKET_CONTROL_ADDR',
+                                         'MGBFS_SEGMENT_OWNER_LANES', 'MGBFS_SEGMENT_QUEUE_CAP',
+                                         'MGBFS_SEGMENT_MAX_RANK_STATES', 'MGBFS_SEGMENT_SHARD_TARGET_ROWS',
+                                         'MGBFS_SEGMENT_ROWS'))):
+        return None
+    from .workload_geometry import coxeter_frontier_bound
+
+    bound = coxeter_frontier_bound(graph)
+    if bound is None or bound['maximum_frontier'] < 1 << 28:
+        return None
+    # The S13 comparison used four concurrent owners on eight shards and
+    # 98,304 generated candidates per tile. Keep both limits as branching grows.
+    return {'kind': 'LARGE_TWO_RANK_PACK4_EXACT', 'minimum_shards': 8,
+            'source_batch_cap': max(1, min(8192, 98_304 // graph.generator_count))}
+
+
 def choose_segmented_shards(graph, admission, *, bitmap=False, target_rows=LOCAL_SHARD_TARGET,
-                            rank_limit=None, segment_rows=None, env=None):
+                            rank_limit=None, segment_rows=None, env=None, minimum_shards=1):
     if type(target_rows) is not int or not 1<=target_rows<=LOCAL_SHARD_TARGET:
         raise ValueError('INVALID_SHARD_TARGET_ROWS')
     if rank_limit is not None and (type(rank_limit) is not int or rank_limit<1):
@@ -167,7 +192,7 @@ def choose_segmented_shards(graph, admission, *, bitmap=False, target_rows=LOCAL
         peak_effective=target_rows
     effective=max(1,effective)
     peak_effective=max(1,peak_effective)
-    needed=max(1,_ceil_div(peak_effective,target_rows))
+    needed=max(minimum_shards,_ceil_div(peak_effective,target_rows))
     rounded=1<<(needed-1).bit_length()
     shard_ceiling=1<<(shard_budget.bit_length()-1)
     return {'target_shards':min(MAX_LOGICAL_SHARDS,shard_ceiling,rounded),
