@@ -459,7 +459,7 @@ def _record_native_nearest(result, graph, targets, check, add, report):
             report["completed_through_length"] = distance
 
 
-def _agree_window_receipts(replies, *, bidirectional=None):
+def _agree_window_receipts(replies, *, bidirectional=None, max_length=None):
     if not replies:
         raise RuntimeError("NATIVE_WINDOW_CONSENSUS_MISMATCH")
     if bidirectional is None:
@@ -497,6 +497,13 @@ def _agree_window_receipts(replies, *, bidirectional=None):
             raise ValueError
         confirmed = first["graph_completed_through_depth"]
         if confirmed is not None and not nonnegative(confirmed):
+            raise ValueError
+        # Exhaustion may leave a shorter layer table, but a complete receipt
+        # certifies the requested length even when the remaining lengths are empty.
+        if max_length is not None and (
+            status == "COMPLETE" and confirmed != max_length
+            or confirmed is not None and confirmed > max_length
+        ):
             raise ValueError
         if bidirectional:
             earliest, last = first["first_cut_length"], first["last_cut_length"]

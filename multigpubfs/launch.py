@@ -673,7 +673,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
      raise RuntimeError('NATIVE_DISTRIBUTED_PATH_RECEIPT_INVALID')
     if _path_window is not None:
      from .path_search import _agree_window_receipts
-     result=_agree_window_receipts(replies,bidirectional=_path_bidirectional)
+     result=_agree_window_receipts(replies,bidirectional=_path_bidirectional,max_length=_path_window['max_length'])
     else:
      if not replies or any(reply!=replies[0] for reply in replies[1:]):
       raise RuntimeError('NATIVE_DISTRIBUTED_PATH_CONSENSUS_MISMATCH')

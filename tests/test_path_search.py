@@ -846,6 +846,27 @@ def test_native_window_consensus_rejects_missing_cut_layers():
         path_search._agree_window_receipts([rank, missing])
 
 
+def test_native_window_cannot_report_complete_for_a_short_prefix(tmp_path, monkeypatch):
+    from multigpubfs import launch
+
+    graph = GraphDefinition.permutation([[1, 0]], [0, 1])
+
+    def fake_launch(graph, output, *, _path_window, **options):
+        if _path_window is None:
+            return dict(status="COMPLETE", stop_reason=None, d_min=1,
+                        target_index=0, generator_ids=[0])
+        assert _path_window["max_length"] == 3
+        rank = dict(status="COMPLETE", stop_reason=None, graph_completed_through_depth=0,
+                    layer_rows=[1], lineage_peak_bytes=0, lineage_csr_bytes=0)
+        return path_search._agree_window_receipts([rank], max_length=_path_window["max_length"])
+
+    monkeypatch.setattr(launch, "run_graph", fake_launch)
+    with pytest.raises(RuntimeError, match="NATIVE_WINDOW_CONSENSUS_MISMATCH"):
+        path_search.solve(graph, targets=[[1, 0]], output=tmp_path, goal_mode="window",
+                          extra_steps=2, native=("mgbfs", {}, (0,), True))
+    assert not (tmp_path / "report.json").exists()
+
+
 def test_native_bidirectional_window_streams_unique_cuts_with_cycles(tmp_path, monkeypatch):
     from struct import pack
     from multigpubfs import launch

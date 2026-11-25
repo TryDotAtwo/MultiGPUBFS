@@ -271,7 +271,8 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
       workspaces={'ranks':[reply['workspace'] for reply in replies]}
       if path_window is not None:
        from .path_search import _agree_window_receipts
-       result=_agree_window_receipts([reply['path'] for reply in replies])
+       result=_agree_window_receipts([reply['path'] for reply in replies],bidirectional=path_bidirectional,
+                                     max_length=path_window['max_length'])
       else:
        if any(reply['path']!=local for reply in replies):raise RuntimeError('NATIVE_DISTRIBUTED_PATH_CONSENSUS_MISMATCH')
        result=local
