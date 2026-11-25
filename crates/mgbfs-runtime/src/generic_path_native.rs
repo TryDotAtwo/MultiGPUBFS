@@ -1186,13 +1186,12 @@ pub(crate) fn distributed_window_forward(
     seconds: u64,
     output: &std::path::Path,
 ) -> Result<DistributedPathResult> {
-    use crate::generic_distributed_native::{DistributedAdvance, WindowTile};
+    use crate::generic_distributed_native::{DistributedAdvance, WindowLineage, WindowTile};
     use crate::path_csr::TransitionSpool;
     use std::io::{BufWriter, Write};
 
     let arena = bfs.path_arena()?;
     let width = arena.plan.elements as usize;
-    let mut tile = WindowTile::new(bfs.window_plan());
     if goals.is_empty() || goals.iter().any(|goal| goal.len() != width) {
         return Err("NATIVE_PATH_TARGETS".into());
     }
@@ -1201,12 +1200,13 @@ pub(crate) fn distributed_window_forward(
         let buffers = (
             QueryGpu::new(&arena.plan, width * 8, arena.device, scan)?,
             Buffer::new(bfs.window_edge_bytes(), arena.device)?,
+            WindowTile::new(bfs.window_plan(), arena.device)?,
         );
         crate::session_cache::generic_requirements_consumed()?;
         Ok::<_, String>(buffers)
     })();
     agree_path_stop(bfs, &setup)?;
-    let (kernel, ids) = setup?;
+    let (kernel, ids, mut tile) = setup?;
     let local_goals: Vec<_> = goals.iter().enumerate()
         .filter(|(_, goal)| bfs.owns_path_target(goal))
         .collect();
@@ -1271,15 +1271,16 @@ pub(crate) fn distributed_window_forward(
             break ("COMPLETE", None);
         }
         let next = depth + 1;
-        let spool = TransitionSpool::new(
+        let lineage = TransitionSpool::new(
             output.join(format!("{next}.runs")),
             budget - committed_bytes,
-        );
-        if let Some(reason) = agree_path_stop(bfs, &spool)? {
+        ).and_then(WindowLineage::new);
+        if let Some(reason) = agree_path_stop(bfs, &lineage)? {
             break ("INCOMPLETE", Some(reason));
         }
-        let mut spool = spool?;
-        let advanced = bfs.advance_window(&mut spool, &ids, &mut tile, &|| query_checkpoint(&time));
+        let mut lineage = lineage?;
+        let advanced = bfs.advance_window(&mut lineage, &ids, &mut tile, &|| query_checkpoint(&time));
+        let mut spool = lineage.into_spool(&advanced)?;
         peak_bytes = peak_bytes.max(committed_bytes + spool.peak_reserved_bytes());
         match advanced {
             Ok(DistributedAdvance::Complete) => break ("COMPLETE", None),
@@ -1347,13 +1348,12 @@ pub(crate) fn distributed_window_bidirectional(
     seconds: u64,
     output: &std::path::Path,
 ) -> Result<DistributedPathResult> {
-    use crate::generic_distributed_native::{DistributedAdvance, WindowTile};
+    use crate::generic_distributed_native::{DistributedAdvance, WindowLineage, WindowTile};
     use crate::path_csr::TransitionSpool;
     use std::io::{BufWriter, Write};
 
     let arena = forward.path_arena()?;
     let width = arena.plan.elements as usize;
-    let mut tile = WindowTile::new(forward.window_plan());
     let setup = (|| {
         let scan = scanner().ok_or("NATIVE_PATH_CUDA_ABI_UNAVAILABLE")?;
         let resolve = resolve_children_kernel()?;
@@ -1361,12 +1361,13 @@ pub(crate) fn distributed_window_bidirectional(
             QueryGpu::new(&arena.plan, width * 8, arena.device, scan)?,
             // The owner tile and cut join are sequential and drain before reuse.
             Buffer::new(forward.window_edge_bytes().max(WINDOW_JOIN_ROWS * 4), arena.device)?,
+            WindowTile::new(forward.window_plan(), arena.device)?,
         );
         crate::session_cache::generic_requirements_consumed()?;
         Ok::<_, String>((buffers, resolve))
     })();
     agree_path_stop(forward, &setup)?;
-    let ((kernel, ids), resolve) = setup?;
+    let ((kernel, ids, mut tile), resolve) = setup?;
     let mut host_matches = vec![u32::MAX; WINDOW_JOIN_ROWS];
     let sides = [forward, reverse];
     let roots = [output.join("forward"), output.join("reverse")];
@@ -1431,15 +1432,16 @@ pub(crate) fn distributed_window_bidirectional(
                 let side = (length % 2) as usize;
                 let depth = sizes[side].len();
                 let root = &roots[side];
-                let spool = TransitionSpool::new(
+                let lineage = TransitionSpool::new(
                     root.join(format!("{depth}.runs")),
                     budget - committed_bytes,
-                );
-                if let Some(reason) = agree_path_stop(sides[0], &spool)? {
+                ).and_then(WindowLineage::new);
+                if let Some(reason) = agree_path_stop(sides[0], &lineage)? {
                     break 'window ("INCOMPLETE", Some(reason));
                 }
-                let mut spool = spool?;
-                let advanced = sides[side].advance_window(&mut spool, &ids, &mut tile, &|| query_checkpoint(&time));
+                let mut lineage = lineage?;
+                let advanced = sides[side].advance_window(&mut lineage, &ids, &mut tile, &|| query_checkpoint(&time));
+                let mut spool = lineage.into_spool(&advanced)?;
                 peak_bytes = peak_bytes.max(committed_bytes + spool.peak_reserved_bytes());
                 match advanced {
                     Ok(DistributedAdvance::Complete) => {

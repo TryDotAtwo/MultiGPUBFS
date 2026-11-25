@@ -1,8 +1,7 @@
 //! Native path candidate generation and owner consumption on compact packets.
-use super::{Event, GenericDistributedBfs, WindowEdge};
+use super::{Event, GenericDistributedBfs, WindowEdge, WindowLineage, WindowSenders, WindowTile};
 use crate::generic_distributed_memory::GenericDistributedMemoryPlan as Plan;
 use crate::generic_native::{Buffer, GenericNativeBfs, Stream};
-use crate::path_csr::{Transition, TransitionSpool};
 use crate::segmented_distributed_native::{
     packet::{compact_route_kernel, CompactRouteFn, PacketError, RawPacketTransport, RawShardRun},
     BitmapDeviceDomain,
@@ -283,11 +282,8 @@ pub(super) struct OwnerBatch<'a> {
     pub(super) bfs: &'a GenericNativeBfs,
     pub(super) ready: &'a Event,
     pub(super) parents: Option<&'a Buffer>,
-    pub(super) lineage: Option<(
-        &'a mut TransitionSpool,
-        &'a Buffer,
-        &'a mut super::WindowTile,
-    )>,
+    pub(super) lineage: Option<(&'a mut WindowLineage, &'a Buffer, &'a mut WindowTile)>,
+    pub(super) checkpoint: &'a dyn Fn() -> Result<()>,
     pub(super) path_error: &'a mut Option<String>,
 }
 
@@ -324,16 +320,25 @@ impl OwnerBatch<'_> {
                 states: run.states,
                 records: run.records.cast(),
             };
-            crate::generic_native::checked!(mgbfs_generic_accept_compact_path_v1, unsafe {
-                (self.kernels.accept)(&input, &owner, stream)
-            })?;
-            if let Some((spool, device, tile)) = self.lineage.as_mut() {
-                let mut begin = 0;
-                while begin < run.rows {
-                    let rows = (run.rows - begin).min(tile.edges.len() as u32);
-                    let edges = &mut tile.edges[..rows as usize];
-                    let mut error = 0u32;
-                    let queued = (|| -> Result<()> {
+            let queued = (|| -> Result<()> {
+                crate::generic_native::checked!(mgbfs_generic_accept_compact_path_v1, unsafe {
+                    (self.kernels.accept)(&input, &owner, stream)
+                })?;
+                if let Some((lineage, primary, tile)) = self.lineage.as_mut() {
+                    let mut begin = 0;
+                    while begin < run.rows {
+                        if let Err(error) = (self.checkpoint)() {
+                            *self.path_error = Some(error);
+                            break;
+                        }
+                        let rows = (run.rows - begin).min(tile.readback.rows as u32);
+                        let device_slot = tile.next_device;
+                        let device = if device_slot == 0 {
+                            *primary
+                        } else {
+                            tile.second_device.as_ref().ok_or("NATIVE_WINDOW_DEVICE_SLOT")?
+                        };
+                        tile.readback.wait_for_scratch(stream, device_slot)?;
                         crate::generic_native::checked!(
                             mgbfs_generic_resolve_compact_window_edges_v1,
                             unsafe {
@@ -349,45 +354,36 @@ impl OwnerBatch<'_> {
                                 )
                             }
                         )?;
+                        // The copy stream reads tile-local status, so the next
+                        // owner can update the shared error word before D2H ends.
+                        let error_snapshot = device.at::<u32>(tile.readback.rows * size_of::<WindowEdge>());
                         crate::generic_native::checked!(cudaMemcpyAsync, unsafe {
-                            cudaMemcpyAsync(
-                                edges.as_mut_ptr().cast(),
-                                device.ptr,
-                                std::mem::size_of_val(edges),
-                                2,
-                                stream,
-                            )
+                            cudaMemcpyAsync(error_snapshot.cast(), owner.error.cast(), size_of::<u32>(), 3, stream)
                         })?;
-                        crate::generic_native::checked!(cudaMemcpyAsync, unsafe {
-                            cudaMemcpyAsync(
-                                (&mut error as *mut u32).cast(),
-                                owner.error.cast(),
-                                size_of::<u32>(),
-                                2,
-                                stream,
-                            )
-                        })
-                    })();
-                    let drained = wait_owner(self.ready, run.shard, stream, pump);
-                    queued.and(drained)?;
-                    if error != 0 {
-                        return Ok(());
+                        if let Err(error) = tile.readback.enqueue(
+                            lineage, device, device_slot, stream, rows as usize, self.plan.capacity,
+                            b.generators, WindowSenders::Uniform(run.source_rank),
+                            Some(error_snapshot),
+                            || {
+                                (self.checkpoint)()?;
+                                pump(&[(run.shard, stream)])
+                            },
+                        ) {
+                            *self.path_error = Some(error);
+                            break;
+                        }
+                        tile.next_device ^= 1;
+                        begin += rows;
                     }
-                    tile.transitions.clear();
-                    tile.transitions.extend(edges.iter().map(|edge| Transition {
-                        child: u64::from(edge.child),
-                        parent_rank: run.source_rank,
-                        parent: edge.parent,
-                        generator: edge.generator,
-                    }));
-                    if let Err(err) = spool.add(&mut tile.transitions) {
-                        *self.path_error = Some(err);
-                        return Ok(());
-                    }
-                    begin += rows;
                 }
-            } else {
-                wait_owner(self.ready, run.shard, stream, pump)?;
+                Ok(())
+            })();
+            // Release the transport lease after its last owner read. The
+            // writer retains the independent pinned slot through SSD work.
+            let drained = wait_owner(self.ready, run.shard, stream, pump);
+            queued.and(drained)?;
+            if self.path_error.is_some() {
+                break;
             }
         }
         Ok(())
@@ -477,7 +473,7 @@ impl Workspace {
         &mut self,
         bfs: &GenericDistributedBfs,
         parents: Option<&Buffer>,
-        lineage: Option<(&mut TransitionSpool, &Buffer, &mut super::WindowTile)>,
+        lineage: Option<(&mut WindowLineage, &Buffer, &mut WindowTile)>,
         checkpoint: &dyn Fn() -> Result<()>,
     ) -> Result<Option<String>> {
         let plan = &bfs.plan;
@@ -501,6 +497,7 @@ impl Workspace {
             ready: &bfs.ready,
             parents,
             lineage,
+            checkpoint,
             path_error: &mut path_error,
         };
         let mut runs = Vec::with_capacity(plan.shards as usize);

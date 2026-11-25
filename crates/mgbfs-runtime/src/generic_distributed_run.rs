@@ -149,13 +149,14 @@ fn admit(g:&GraphDefinitionV2,devices:Vec<u32>,inventory:Vec<serde_json::Value>,
  let state_bytes=if wide_path{8}else if resident_alphabet{1}else{crate::generic_memory::preferred_state_bytes(g)};
  if (bidirectional||window)&&!path_mode{return Err("NATIVE_PATH_REQUIRES_APPEND_ONLY".into());}
  let arenas=if bidirectional{2}else{1};
+ let legacy_compact=crate::generic_distributed_memory::compact_path_requested();
  let mut path_workspace=if segmented_window{
   crate::segmented_distributed_native::SegmentedDistributedBfs::segmented_window_workspace(g.start.len(),bidirectional)
- }else if window{g.start.len() as u64*(8+u64::from(state_bytes))+12+GenericDistributedBfs::WINDOW_ROWS_PER_COPY as u64*GenericDistributedBfs::WINDOW_EDGE_BYTES as u64}else if path_mode{
+ }else if window{g.start.len() as u64*(8+u64::from(state_bytes))+12+GenericDistributedBfs::window_max_device_scratch_bytes(legacy_compact) as u64}else if path_mode{
   crate::generic_path_native::distributed_workspace(g.start.len() as u64,state_bytes,devices.len(),bidirectional)?
    .into_iter().try_fold(0u64,|total,size|total.checked_add(size as u64)).ok_or("NATIVE_PATH_GATHER_SIZE")?
  }else{0};
- if crate::generic_distributed_memory::compact_path_requested(){
+ if legacy_compact{
   if devices.len()<2||std::env::var_os("MGBFS_SEGMENT_PACKET_CONTROL_ADDR").is_none(){
    return Err("NATIVE_PATH_COMPACT_LAYOUT".into());
   }
@@ -411,6 +412,7 @@ pub fn run(args:&[String])->Result<()>{
   let edge_bytes=GenericDistributedBfs::window_plan_edge_bytes(&rank_plan);
   let scratch=if launch.path_bidirectional{edge_bytes.max(crate::generic_path_native::WINDOW_JOIN_ROWS*4)}else{edge_bytes};
   required.extend([row,8,4,g.start.len()*rank_plan.state_bytes as usize,scratch]);
+  if rank_plan.compact_transport{required.push(edge_bytes);}
  }else if launch.path_targets.is_some(){
   required.extend(crate::generic_path_native::distributed_workspace(g.start.len() as u64,rank_plan.state_bytes,rank_plan.world as usize,launch.path_bidirectional)?);
   required.push(rank_plan.capacity as usize*crate::generic_path_native::PARENT_BYTES);

@@ -1,8 +1,10 @@
 //! General exact distributed engine: preallocated queues and independent owner streams.
 //! Fixed-capacity transport is a correctness fallback, not an optimal bandwidth claim.
-use std::{cell::RefCell,ffi::c_void,ptr,rc::Rc};
+use std::{cell::RefCell,collections::VecDeque,ffi::c_void,ptr,rc::Rc,time::Duration};
 use crate::generic_sorted_native::{Input as SortedInput,Destination as SortedDestination,OwnerShape,SortedOwner};
 use crate::generic_route::RoundVote;
+use crate::path_csr::{Transition, TransitionSpool, TransitionWriter};
+use crate::pinned_archive::Slot;
 use crate::segmented_packet_transport::PacketEndpoint;
 use mgbfs_core::{graph_definition::{GraphDefinitionV2,GraphAction},Result};
 use mgbfs_cuda::{ffi::*,generic_graph::*};
@@ -483,33 +485,47 @@ impl GenericDistributedBfs{
  pub(crate) fn window_plan(&self)->&GenericDistributedMemoryPlan{&self.plan}
  pub(crate) const WINDOW_ROWS_PER_COPY:usize=8192;
  pub(crate) const WINDOW_EDGE_BYTES:usize=std::mem::size_of::<WindowEdge>();
+ const WINDOW_STATUS_BYTES:usize=std::mem::size_of::<u32>();
+ pub(crate) fn window_max_device_scratch_bytes(compact:bool)->usize{
+  let edges=Self::WINDOW_ROWS_PER_COPY*Self::WINDOW_EDGE_BYTES;
+  if compact{2*(edges+Self::WINDOW_STATUS_BYTES)}else{edges}
+ }
  fn window_tile_rows(plan:&GenericDistributedMemoryPlan)->usize{
   (u64::from(plan.queue_capacity)*u64::from(plan.world)*u64::from(plan.shards))
    .min(Self::WINDOW_ROWS_PER_COPY as u64) as usize
  }
  pub(crate) fn window_plan_edge_bytes(plan:&GenericDistributedMemoryPlan)->usize{
-  Self::window_tile_rows(plan)*Self::WINDOW_EDGE_BYTES
+  let edges=Self::window_tile_rows(plan)*Self::WINDOW_EDGE_BYTES;
+  if plan.compact_transport{edges+Self::WINDOW_STATUS_BYTES}else{edges}
  }
  pub(crate) fn window_edge_bytes(&self)->usize{
   Self::window_plan_edge_bytes(&self.plan)
  }
  pub(crate) fn advance_window(
-  &mut self, spool:&mut crate::path_csr::TransitionSpool, child_ids:&Buffer, tile:&mut WindowTile, checkpoint:&dyn Fn()->Result<()>,
+  &mut self, lineage:&mut WindowLineage, child_ids:&Buffer, tile:&mut WindowTile, checkpoint:&dyn Fn()->Result<()>,
  )->Result<DistributedAdvance>{
-  if self.plan.history_layers!=1 || self.plan.history_algorithm!="HASH" || self.plan.packed_candidates()
-     || self.plan.parent_transport || self.plan.sort_candidates || self.gemm.is_some() || self.online_size_tuning {
-   return Err("NATIVE_WINDOW_OWNER_LAYOUT".into());
-  }
-  let required=self.window_edge_bytes();
-  if child_ids.device!=self.bfs.device || child_ids.bytes<required ||
-     tile.edges.len()*Self::WINDOW_EDGE_BYTES!=required ||
-     tile.counts.len()!=self.plan.world as usize*self.plan.shards as usize{
-   return Err("NATIVE_WINDOW_TILE_WORKSPACE".into());
-  }
-  if self.compact_path.is_some(){
-   return self.advance_compact_path(None,Some((spool,child_ids,tile)),checkpoint);
-  }
-  self.advance_internal(Some((spool,child_ids,tile)),None,Some(checkpoint))
+  let advanced=(||{
+   if self.plan.history_layers!=1 || self.plan.history_algorithm!="HASH" || self.plan.packed_candidates()
+      || self.plan.parent_transport || self.plan.sort_candidates || self.gemm.is_some() || self.online_size_tuning {
+    return Err("NATIVE_WINDOW_OWNER_LAYOUT".into());
+   }
+   let required=self.window_edge_bytes();
+   if child_ids.device!=self.bfs.device || child_ids.bytes<required ||
+      tile.readback.rows!=Self::window_tile_rows(&self.plan) ||
+      tile.second_device.is_some()!=self.plan.compact_transport ||
+      tile.counts.len()!=self.plan.world as usize*self.plan.shards as usize{
+    return Err("NATIVE_WINDOW_TILE_WORKSPACE".into());
+   }
+   if self.compact_path.is_some(){
+    self.advance_compact_path(None,Some((&mut *lineage,child_ids,&mut *tile)),checkpoint)
+   }else{
+    self.advance_internal(Some((&mut *lineage,child_ids,&mut *tile)),None,Some(checkpoint))
+   }
+  })();
+  // An early exit may bypass the layer epilogue. Keep its disk high-water
+  // mark and release every queued copy without admitting the partial layer.
+  let cleanup=tile.readback.finish(lineage,false);
+  advanced.and_then(|state| cleanup.map(|()| state))
  }
  pub(crate) fn advance_nearest(&mut self, parents:&Buffer, checkpoint:&dyn Fn()->Result<()>)->Result<DistributedAdvance>{
   let p=&self.plan;
@@ -525,7 +541,7 @@ impl GenericDistributedBfs{
  }
  fn advance_compact_path(
   &mut self, parents:Option<&Buffer>,
-  lineage:Option<(&mut crate::path_csr::TransitionSpool,&Buffer,&mut WindowTile)>,
+  mut lineage:Option<(&mut WindowLineage,&Buffer,&mut WindowTile)>,
   checkpoint:&dyn Fn()->Result<()>,
  )->Result<DistributedAdvance>{
   let window=lineage.is_some();
@@ -538,17 +554,19 @@ impl GenericDistributedBfs{
    crate::generic_native::checked!(cudaSetDevice, unsafe{mgbfs_cuda::native_owner::cudaSetDevice(b.device)})?;
    if window{Self::prepare_window_bank(b)?;}
    crate::generic_native::checked!(cudaMemsetAsync, unsafe{cudaMemsetAsync(b.control.at::<c_void>(4),0,4,b.stream.ptr)})?;
-   workspace.expand(self,parents,lineage,checkpoint)
+   workspace.expand(self,parents,lineage.as_mut().map(|(writer,ids,tile)|(&mut **writer,*ids,&mut **tile)),checkpoint)
   })();
   if expanded.is_err(){
    workspace.transport.notify_failure();
    self.comm.abort(self.rank);
    let _=workspace.transport.drain_after_abort();
   }
-  self.finish_layer(window,None,Some(checkpoint),expanded?)
+  let mut path_error=expanded?;
+  finish_window_lineage(lineage,Some(checkpoint),&mut path_error);
+  self.finish_layer(window,None,Some(checkpoint),path_error)
  }
  fn advance_internal(
-  &mut self, mut lineage:Option<(&mut crate::path_csr::TransitionSpool,&Buffer,&mut WindowTile)>,
+  &mut self, mut lineage:Option<(&mut WindowLineage,&Buffer,&mut WindowTile)>,
   path_parents:Option<&Buffer>, checkpoint:Option<&dyn Fn()->Result<()>>,
  )->Result<DistributedAdvance>{
   let mut path_error=None;
@@ -742,12 +760,12 @@ impl GenericDistributedBfs{
    for(lane,owner_stream)in self.streams.iter().enumerate(){crate::generic_native::checked!(cudaEventRecord, unsafe{cudaEventRecord(self.done[lane].ptr,owner_stream.ptr)})?;}
    // Next round may generate into the other source bank; inbox retirement
    // waits occur after that generation and before the next exchange.
-   if let Some((spool,ids,tile))=lineage.as_mut(){
+   if let Some((writer,ids,tile))=lineage.as_mut(){
     for event in &self.done{
      crate::generic_native::checked!(cudaStreamWaitEvent, unsafe{cudaStreamWaitEvent(stream,event.ptr,0)})?;
     }
     let status=tile.write(
-      b,p,self.rank,bank,inbox,exact_counts.as_deref(),ids,stream,&mut **spool,
+      b,p,self.rank,bank,inbox,exact_counts.as_deref(),ids,stream,&mut **writer,
       checkpoint.ok_or("NATIVE_WINDOW_CHECKPOINT")?);
     if path_error.is_none(){path_error=status.err();}
    }
@@ -774,7 +792,9 @@ impl GenericDistributedBfs{
    if profiling&&trial==schedule.len(){batch=self.active_batch;}
   }
   if round>0{for event in &self.done{crate::generic_native::checked!(cudaStreamWaitEvent, unsafe{cudaStreamWaitEvent(stream,event.ptr,0)})?;}}
-  self.finish_layer(lineage.is_some(),rolling.then_some(future_bank),checkpoint,path_error)
+  let window=lineage.is_some();
+  finish_window_lineage(lineage,checkpoint,&mut path_error);
+  self.finish_layer(window,rolling.then_some(future_bank),checkpoint,path_error)
  }
 
  fn prepare_window_bank(b: &mut GenericNativeBfs) -> Result<()> {
@@ -842,34 +862,250 @@ const PATH_STOP_VOTE:u32=1<<31;
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct WindowEdge {parent:u64,child:u32,generator:u32}
+
+const WINDOW_HOST_SLOTS: usize = 3;
+
+struct WindowBatch {
+    slot: Slot,
+    senders: Vec<u32>,
+    uniform_sender: u32,
+    rows: usize,
+    child_limit: u32,
+    generators: u32,
+    error_offset: Option<usize>,
+}
+
+pub(crate) struct WindowLineage {
+    writer: Option<TransitionWriter<WindowBatch>>,
+    spool: Option<TransitionSpool>,
+}
+
+impl WindowLineage {
+    pub(crate) fn new(spool: TransitionSpool) -> Result<Self> {
+        let mut transitions = Vec::with_capacity(GenericDistributedBfs::WINDOW_ROWS_PER_COPY);
+        let writer = TransitionWriter::new(spool, WINDOW_HOST_SLOTS, move |spool, batch: &mut WindowBatch| {
+            if let Some(offset) = batch.error_offset {
+                // The owner reports device overflow and resolver failures in the rank vote.
+                if unsafe { batch.slot.ptr.cast::<u8>().add(offset).cast::<u32>().read() } != 0 {
+                    return Ok(());
+                }
+            }
+            let edges = unsafe { std::slice::from_raw_parts(batch.slot.ptr.cast::<WindowEdge>(), batch.rows) };
+            transitions.clear();
+            for (index, edge) in edges.iter().enumerate() {
+                if edge.child >= batch.child_limit {
+                    return Err("NATIVE_WINDOW_UNRESOLVED_EDGE".into());
+                }
+                if edge.generator >= batch.generators {
+                    return Err("NATIVE_WINDOW_ROUTE_METADATA".into());
+                }
+                transitions.push(Transition {
+                    child: u64::from(edge.child),
+                    parent_rank: batch.senders.get(index).copied().unwrap_or(batch.uniform_sender),
+                    parent: edge.parent,
+                    generator: edge.generator,
+                });
+            }
+            spool.add(&mut transitions)
+        })?;
+        Ok(Self { writer: Some(writer), spool: None })
+    }
+
+    pub(crate) fn into_spool(self, advanced: &Result<DistributedAdvance>) -> Result<TransitionSpool> {
+        self.spool.ok_or_else(|| {
+            advanced.as_ref().err().cloned().unwrap_or_else(|| "NATIVE_WINDOW_WRITER_UNFINISHED".into())
+        })
+    }
+}
+
+fn finish_window_lineage(
+    lineage: Option<(&mut WindowLineage, &Buffer, &mut WindowTile)>,
+    checkpoint: Option<&dyn Fn() -> Result<()>>,
+    path_error: &mut Option<String>,
+) {
+    if let Some((lineage, _, tile)) = lineage {
+        if path_error.is_none() {
+            *path_error = checkpoint.and_then(|check| check().err());
+        }
+        let result = tile.readback.finish(lineage, path_error.is_none());
+        if path_error.is_none() {
+            *path_error = result.err();
+        }
+    }
+}
+
+enum WindowSenders<'a> {
+    Uniform(u32),
+    PerRow(&'a [u32]),
+}
+
+struct WindowReadback {
+    copy: Stream,
+    produced: Event,
+    copied: [Event; 2],
+    rows: usize,
+    pending: VecDeque<WindowBatch>,
+    free: Vec<WindowBatch>,
+}
+
+impl WindowReadback {
+    fn new(rows: usize, device: i32) -> Result<Self> {
+        // Reserve an aligned extra word for a compact owner's status snapshot.
+        let bytes = rows * std::mem::size_of::<WindowEdge>() + std::mem::align_of::<WindowEdge>();
+        crate::session_cache::prepare_pinned(bytes, WINDOW_HOST_SLOTS);
+        let free = Slot::new_ring(bytes, WINDOW_HOST_SLOTS)?.into_iter().map(|slot| WindowBatch {
+            slot,
+            senders: Vec::with_capacity(rows),
+            uniform_sender: 0,
+            rows: 0,
+            child_limit: 0,
+            generators: 0,
+            error_offset: None,
+        }).collect();
+        Ok(Self {
+            copy: Stream::new(device)?,
+            produced: Event::new(device)?,
+            copied: [Event::new(device)?, Event::new(device)?],
+            rows,
+            pending: VecDeque::with_capacity(WINDOW_HOST_SLOTS),
+            free,
+        })
+    }
+
+    fn wait_for_scratch(&self, owner: *mut c_void, device_slot: usize) -> Result<()> {
+        crate::generic_native::checked!(cudaStreamWaitEvent, unsafe {
+            cudaStreamWaitEvent(owner, self.copied[device_slot].ptr, 0)
+        })
+    }
+
+    fn service(&mut self, writer: &mut TransitionWriter<WindowBatch>) -> Result<()> {
+        while let Some(batch) = self.pending.front() {
+            match unsafe { cudaEventQuery(batch.slot.ready) } {
+                0 => {}
+                600 => break,
+                status => return crate::generic_native::checked!(cudaEventQuery, status),
+            }
+            let batch = self.pending.pop_front().unwrap();
+            if let Err((error, rejected)) = writer.submit(batch) {
+                self.free.push(rejected);
+                return Err(error);
+            }
+        }
+        while let Some(batch) = writer.try_reclaim() {
+            self.free.push(batch);
+        }
+        writer.failure().map_or(Ok(()), Err)
+    }
+
+    fn enqueue(
+        &mut self,
+        lineage: &mut WindowLineage,
+        ids: &Buffer,
+        device_slot: usize,
+        owner: *mut c_void,
+        rows: usize,
+        child_limit: u32,
+        generators: u32,
+        senders: WindowSenders<'_>,
+        owner_error: Option<*const u32>,
+        mut progress: impl FnMut() -> Result<()>,
+    ) -> Result<()> {
+        if rows == 0 || rows > self.rows || matches!(&senders, WindowSenders::PerRow(ranks) if ranks.len() != rows) {
+            return Err("NATIVE_WINDOW_READBACK_ROWS".into());
+        }
+        let writer = lineage.writer.as_mut().ok_or("NATIVE_WINDOW_WRITER_UNFINISHED")?;
+        self.service(writer)?;
+        while self.free.is_empty() {
+            progress()?;
+            if let Some(batch) = writer.reclaim_timeout(Duration::from_micros(100)) {
+                self.free.push(batch);
+            } else {
+                std::thread::yield_now();
+            }
+            self.service(writer)?;
+        }
+        let mut batch = self.free.pop().unwrap();
+        batch.rows = rows;
+        batch.child_limit = child_limit;
+        batch.generators = generators;
+        batch.senders.clear();
+        match senders {
+            WindowSenders::Uniform(rank) => batch.uniform_sender = rank,
+            WindowSenders::PerRow(ranks) => batch.senders.extend_from_slice(ranks),
+        }
+        let bytes = rows * std::mem::size_of::<WindowEdge>();
+        batch.error_offset = owner_error.map(|_| bytes);
+        let queued = (|| -> Result<()> {
+            crate::generic_native::checked!(cudaEventRecord, unsafe { cudaEventRecord(self.produced.ptr, owner) })?;
+            let copy = self.copy.ptr;
+            crate::generic_native::checked!(cudaStreamWaitEvent, unsafe { cudaStreamWaitEvent(copy, self.produced.ptr, 0) })?;
+            crate::generic_native::checked!(cudaMemcpyAsync, unsafe { cudaMemcpyAsync(batch.slot.ptr, ids.ptr, bytes, 2, copy) })?;
+            if let Some(error) = owner_error {
+                crate::generic_native::checked!(cudaMemcpyAsync, unsafe {
+                    cudaMemcpyAsync(batch.slot.ptr.cast::<u8>().add(bytes).cast(), error.cast(), 4, 2, copy)
+                })?;
+            }
+            crate::generic_native::checked!(cudaEventRecord, unsafe { cudaEventRecord(self.copied[device_slot].ptr, copy) })?;
+            crate::generic_native::checked!(cudaEventRecord, unsafe { cudaEventRecord(batch.slot.ready, copy) })
+        })();
+        if queued.is_err() {
+            // A failed event record may leave a transfer not covered by slot.ready.
+            unsafe { cudaStreamSynchronize(self.copy.ptr) };
+            self.free.push(batch);
+        } else {
+            self.pending.push_back(batch);
+        }
+        queued
+    }
+
+    fn finish(&mut self, lineage: &mut WindowLineage, complete: bool) -> Result<()> {
+        let Some(mut writer) = lineage.writer.take() else { return Ok(()) };
+        let drained = crate::generic_native::checked!(cudaStreamSynchronize, unsafe { cudaStreamSynchronize(self.copy.ptr) });
+        let submitted = if complete && drained.is_ok() {
+            self.service(&mut writer)
+        } else {
+            writer.discard();
+            Ok(())
+        };
+        self.free.extend(self.pending.drain(..));
+        let (spool, failure, returned) = writer.finish()?;
+        self.free.extend(returned);
+        lineage.spool = Some(spool);
+        drained.and(submitted)?;
+        if complete {
+            if let Some(error) = failure { return Err(error); }
+        }
+        Ok(())
+    }
+}
+
 pub(crate) struct WindowTile {
- edges:Vec<WindowEdge>,
+ readback:WindowReadback,
+ second_device:Option<Buffer>,
+ next_device:usize,
  senders:Vec<u32>,
  counts:Vec<u32>,
- transitions:Vec<crate::path_csr::Transition>,
 }
 impl WindowTile {
- pub(crate) fn new(plan:&GenericDistributedMemoryPlan)->Self{
+ pub(crate) fn new(plan:&GenericDistributedMemoryPlan,device:i32)->Result<Self>{
   let tile_rows=GenericDistributedBfs::window_tile_rows(plan);
-  Self{
-   edges:vec![WindowEdge::default();tile_rows],
+  Ok(Self{
+   readback:WindowReadback::new(tile_rows,device)?,
+   second_device:plan.compact_transport.then(|| Buffer::new(GenericDistributedBfs::window_plan_edge_bytes(plan),device)).transpose()?,
+   next_device:0,
    senders:vec![0;tile_rows],
    counts:vec![0;plan.world as usize*plan.shards as usize],
-   transitions:Vec::with_capacity(GenericDistributedBfs::WINDOW_ROWS_PER_COPY),
-  }
+  })
  }
  fn write(
  &mut self,b:&GenericNativeBfs,p:&GenericDistributedMemoryPlan,rank:u32,source:&QueueBank,inbox:&QueueBank,
- exchanged_counts:Option<&[u32]>,ids:&Buffer,stream:*mut c_void,spool:&mut crate::path_csr::TransitionSpool,checkpoint:&dyn Fn()->Result<()>,
+ exchanged_counts:Option<&[u32]>,ids:&Buffer,stream:*mut c_void,lineage:&mut WindowLineage,checkpoint:&dyn Fn()->Result<()>,
 )->Result<()>{
- use crate::path_csr::Transition;
  checkpoint()?;
  let mut counters=[0u32;3];
  let q=p.queue_capacity as usize;
- let Self{edges,senders,counts,transitions}=self;
- // Discard staging from a previous failed write before reusing the tile.
- transitions.clear();
- let tile_rows=edges.len();
+ let Self{readback,senders,counts,..}=self;
+ let tile_rows=readback.rows;
  let queues=counts.len();
  let local_begin=rank as usize*p.shards as usize;
  let local_end=local_begin+p.shards as usize;
@@ -899,25 +1135,6 @@ impl WindowTile {
  copied.and(drained)?;
  if counters[2]!=0{return Ok(());}
  let child_count=counters[0].checked_sub(b.visited_used).ok_or("NATIVE_WINDOW_CHILD_COUNT")?;
- let mut flush=|edges:&mut [WindowEdge],senders:&[u32]|->Result<()>{
-  if edges.is_empty(){return Ok(());}
-  let copied=crate::generic_native::checked!(cudaMemcpyAsync, unsafe{
-   cudaMemcpyAsync(edges.as_mut_ptr().cast(),ids.ptr,std::mem::size_of_val(edges),2,stream)
-  });
-  let drained=crate::generic_native::checked!(cudaStreamSynchronize, unsafe{cudaStreamSynchronize(stream)});
-  copied.and(drained)?;
-  checkpoint()?;
-  for (edge,&sender) in edges.iter().zip(senders){
-   // Only live queue entries are submitted. Every entry must resolve to a
-   // child in this layer before any edge from this tile reaches the spool.
-   if edge.child>=child_count{return Err("NATIVE_WINDOW_UNRESOLVED_EDGE".into());}
-   if edge.generator>=b.generators{return Err("NATIVE_WINDOW_ROUTE_METADATA".into());}
-   transitions.push(Transition{child:u64::from(edge.child),parent_rank:sender,parent:edge.parent,generator:edge.generator});
-  }
-  spool.add(transitions)?;
-  transitions.clear();
-  Ok(())
- };
  let written=(||->Result<()>{
   let mut used=0;
   for shard in 0..p.shards {
@@ -928,6 +1145,7 @@ impl WindowTile {
     let mut begin=0;
     while begin<count{
      checkpoint()?;
+     if used==0{readback.wait_for_scratch(stream,0)?;}
      let n=(count-begin).min(tile_rows-used);
      crate::generic_native::checked!(mgbfs_generic_resolve_incoming_edges_v3, unsafe{
       mgbfs_generic_resolve_incoming_edges_v3(p.state_bytes,p.elements,source.states.ptr,inbox.states.ptr,
@@ -940,13 +1158,15 @@ impl WindowTile {
      used+=n;
      begin+=n;
      if used==tile_rows{
-      flush(edges,senders)?;
+      readback.enqueue(lineage,ids,0,stream,used,child_count,b.generators,WindowSenders::PerRow(senders),None,checkpoint)?;
       used=0;
      }
     }
    }
   }
-  flush(&mut edges[..used],&senders[..used])?;
+  if used!=0{
+   readback.enqueue(lineage,ids,0,stream,used,child_count,b.generators,WindowSenders::PerRow(&senders[..used]),None,checkpoint)?;
+  }
   checkpoint()?;
   Ok(())
  })();
