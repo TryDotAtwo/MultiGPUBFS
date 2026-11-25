@@ -13,15 +13,18 @@ pub(crate) fn nearest_direct_rows() -> bool {
 /// that condition is proved. Explicit buffers and sorted driver graph storage
 /// remain in device_bytes and are not charged here again.
 pub fn reserve_for_communicator(warmed:bool)->u64 {if warmed {256u64<<20}else{2u64<<30}}
-pub fn admission_reserve_bytes()->Result<u64> {
+pub(crate) fn admission_reserve_for_communicator(warmed:bool)->Result<u64> {
  if let Ok(value)=std::env::var("MGBFS_GENERIC_VRAM_RESERVE_BYTES") {
   return value.parse::<u64>().map_err(|_|"GENERIC_VRAM_RESERVE_BYTES".into());
  }
+ Ok(reserve_for_communicator(warmed))
+}
+pub fn admission_reserve_bytes()->Result<u64> {
  #[cfg(all(feature="cuda",target_os="linux"))]
  let warmed=crate::session_cache::warmed_communicator();
  #[cfg(not(all(feature="cuda",target_os="linux")))]
  let warmed=false;
- Ok(reserve_for_communicator(warmed))
+ admission_reserve_for_communicator(warmed)
 }
 #[cfg(test)]mod reserve_tests {
  #[test]fn reserve_is_absolute_and_warm_nccl_is_not_charged_twice(){
