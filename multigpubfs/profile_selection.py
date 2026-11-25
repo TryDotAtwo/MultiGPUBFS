@@ -47,21 +47,18 @@ def nccl_profile_network(env):
             for key, value in env.items() if key.startswith("NCCL_")}
 
 
-def local_profile_hardware(devices, env):
+def _physical_gpu_slots(devices, env):
     from .autotune import _system_info
     from .native_assets import AssetError, run_hardware_probe
-    from .profile_registry import local_profile_topology
 
-    result = local_hardware()
-    if result is None or sys.platform != "linux":
-        return result
-    topology, driver = result
+    if sys.platform != "linux":
+        return None
     try:
         hardware = run_hardware_probe(timeout=profile_timeout(1), env=env)
         by_device = {row["logical_id"]: row["pci_bus_id"] for row in hardware["devices"]}
         physical = _system_info(["nvidia-smi", "--query-gpu=index,pci.bus_id,mig.mode.current", "--format=csv,noheader"])
         if physical.returncode:
-            return result
+            return None
 
         def bus_key(pci):
             domain, address = pci.strip().lower().split(":", 1)
@@ -71,9 +68,24 @@ def local_profile_hardware(devices, env):
         for line in physical.stdout.splitlines():
             index, bus, mig = (field.strip() for field in line.split(","))
             if mig != "Enabled":
-                by_bus[bus_key(bus)] = int(index)
-        slots = [by_bus[bus_key(by_device[device])] for device in devices]
+                key = bus_key(bus)
+                if key in by_bus:
+                    return None
+                by_bus[key] = int(index)
+        return [by_bus[bus_key(by_device[device])] for device in devices]
     except (AssetError, AttributeError, OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def local_profile_hardware(devices, env):
+    from .profile_registry import local_profile_topology
+
+    result = local_hardware()
+    if result is None:
+        return None
+    topology, driver = result
+    slots = _physical_gpu_slots(devices, env)
+    if slots is None:
         return result
     layout = local_profile_topology(topology, slots, nccl_profile_network(env))
     return (layout, driver) if layout is not None else result
@@ -86,8 +98,9 @@ def cluster_hardware(rank_metadata, inventory):
     return inventory, devices, {"rank_metadata": rank_metadata}, None
 
 
-def cluster_rank_hardware(env, host):
-    from .autotune import _system_info
+def cluster_rank_hardware(env, host, *, device=None):
+    from .cluster import _local_cuda_device
+    from .profile_registry import local_profile_topology
 
     result = local_hardware()
     if result is None:
@@ -95,11 +108,18 @@ def cluster_rank_hardware(env, host):
     topology, driver = result
     metadata = {"host": host, "topology": topology, "driver": driver,
                 "network": nccl_profile_network(env)}
-    uuid = env.get("CUDA_VISIBLE_DEVICES", "").strip()
-    if uuid.startswith("GPU-") and "," not in uuid:
-        index = _system_info(["nvidia-smi", "--id", uuid, "--query-gpu=index", "--format=csv,noheader"])
-        if not index.returncode and index.stdout.strip().isascii() and index.stdout.strip().isdigit():
-            metadata["topology_device"] = int(index.stdout)
+    if device is None:
+        local_rank = env.get("LOCAL_RANK", env.get("SLURM_LOCALID"))
+        try:
+            device = _local_cuda_device(None if local_rank is None else int(local_rank), env)
+        except (TypeError, ValueError):
+            return None
+        if device is None:
+            return metadata
+    slots = _physical_gpu_slots([device], env)
+    if slots is None or local_profile_topology(topology, slots, metadata["network"]) is None:
+        return None
+    metadata["topology_device"] = slots[0]
     return metadata
 
 

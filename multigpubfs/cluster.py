@@ -23,6 +23,11 @@ def current_cluster():
     return _active.get()
 
 
+def _local_cuda_device(local_rank, env):
+    visible = env.get("CUDA_VISIBLE_DEVICES")
+    return 0 if visible is not None and len(visible.split(",")) == 1 else local_rank
+
+
 def _path_native_runtime(job):
     from .launch import _PACKET_ADDR, _PATH_COMPACT, _PATH_SEGMENTED_NEAREST, _PATH_SEGMENTED_WINDOW
     from .native_distribution import native_runtime
@@ -139,8 +144,7 @@ class Cluster:
         return job.response["result"]
 
     def _local_device(self):
-        visible = os.environ.get("CUDA_VISIBLE_DEVICES")
-        return 0 if visible is not None and len(visible.split(",")) == 1 else self.placement.local_rank
+        return _local_cuda_device(self.placement.local_rank, os.environ)
 
     def _packet_address(self):
         return f"{socket.gethostbyname(self.placement.host)}:{self.placement.packet_port}"
@@ -273,7 +277,7 @@ class Cluster:
             deadline = time.monotonic() + 5
             try:
                 with profile_budget(deadline):
-                    metadata = cluster_rank_hardware(env, socket.gethostname())
+                    metadata = cluster_rank_hardware(env, socket.gethostname(), device=inventory[rank]["device"])
                     self.store.put(prefix + f"profile-hardware/{rank}", metadata,
                                    deadline=time.perf_counter() + profile_timeout(5))
             except (ProfileBudgetExpired, TimeoutError):

@@ -109,6 +109,50 @@ def test_local_profile_resolves_physical_slots_before_registry_lookup(monkeypatc
     assert layout["network"] == {"NCCL_P2P_DISABLE": hashlib.sha256(b"1").hexdigest()}
 
 
+def test_cluster_registry_resolves_numeric_slurm_masks(monkeypatch, registry_case):
+    case = registry_case
+    inventory = [dict(row, device=0) for row in case["inventory"]]
+    topology, driver = case["topology"], case["driver"]
+    masks = ({"SLURM_LOCALID": "0", "CUDA_VISIBLE_DEVICES": "4"},
+             {"SLURM_LOCALID": "1", "CUDA_VISIBLE_DEVICES": "2"})
+    # Both rank-local CUDA ordinals are 0, with different physical PCI buses.
+    pci_by_mask = {"4": "0000:03:00.0", "2": "0000:04:00.0", "9": "0000:05:00.0"}
+    physical = "2, 00000000:04:00.0, [N/A]\n4, 00000000:03:00.0, Disabled"
+    monkeypatch.setattr(profile_selection, "local_hardware", lambda: (topology, driver))
+    monkeypatch.setattr(autotune, "_system_info", lambda cmd: CompletedProcess(cmd, 0, stdout=physical))
+
+    def probe(*, timeout, env):
+        assert 0 < timeout <= 1
+        return {"devices": [{"logical_id": 0, "pci_bus_id": pci_by_mask[env["CUDA_VISIBLE_DEVICES"]]}]}
+
+    monkeypatch.setattr(native_assets, "run_hardware_probe", probe)
+    with monkeypatch.context() as context:
+        context.setattr(profile_selection.sys, "platform", "linux")
+        metadata = [profile_selection.cluster_rank_hardware(mask, "host", device=0) for mask in masks]
+        assert profile_selection.cluster_rank_hardware(masks[1], "host") == metadata[1]
+        assert profile_selection.cluster_rank_hardware({"CUDA_VISIBLE_DEVICES": "9"}, "host", device=0) is None
+    expected_metadata = [
+        {"host": "host", "topology": topology, "driver": driver, "network": {}, "topology_device": slot}
+        for slot in (4, 2)
+    ]
+    assert metadata == expected_metadata
+    catalog = json.loads(case["catalog"].read_bytes())
+    catalog["entries"][0]["hardware"] = hardware_key(inventory, [0, 0], {"rank_metadata": expected_metadata})
+    case["catalog"].write_text(json.dumps(catalog), encoding="utf-8")
+    monkeypatch.setattr(native_distribution, "runtime_identity", lambda *_: case["runtime"])
+    admission = {"plan": case["plan"], "owner_cuts": case["cuts"]}
+    monkeypatch.setattr(profile_selection, "query",
+                        lambda cmd, **_: CompletedProcess(cmd, 0, stdout=json.dumps(admission)))
+    recipe, status = profile_selection.select_registry_recipe(
+        {"source": str(case["catalog"]), "sha256": None}, case["graph"], "balanced", "test-native",
+        {}, case["capabilities"], time.monotonic() + 5,
+        hardware=lambda: profile_selection.cluster_hardware(metadata, inventory),
+        inventory=lambda: inventory, packet_address=None,
+    )
+    assert recipe.admission == admission
+    assert status["status"] == "LIVE_ADMITTED_REGISTRY_PROFILE"
+
+
 def test_public_session_replays_pinned_recipe_and_keeps_manual_and_fallback_paths(tmp_path, monkeypatch, registry_case):
     case = registry_case
     graph, devices, inventory = case["graph"], case["devices"], case["inventory"]
@@ -370,6 +414,7 @@ def test_cluster_coordinator_admits_one_recipe_for_all_ranks(tmp_path, monkeypat
     monkeypatch.setattr(native_distribution, "runtime_identity", lambda *_: case["runtime"])
     monkeypatch.setattr(distributed_launch, "_native_artifact_hashes", lambda *_: {"native": "bin", "cuda": "so"})
     monkeypatch.setattr(profile_selection, "local_hardware", lambda: (case["topology"], case["driver"]))
+    monkeypatch.setattr(profile_selection, "_physical_gpu_slots", lambda devices, env: list(devices))
     monkeypatch.setattr(profile_selection, "query", graph_plan)
     monkeypatch.setattr(launch, "_require_memory_backend", lambda *_: capabilities)
     monkeypatch.setattr(launch, "run_graph", native_launch)
