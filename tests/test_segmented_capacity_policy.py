@@ -26,7 +26,7 @@ def test_expired_startup_budget_does_not_start_optional_admission(monkeypatch):
 
 def measure(tmp_path, *, explicit_lane=None, explicit_queue=None,
             capacity_loss=False, bitmap=False, slow_baseline=False, use_cache=False, free_bytes=100000, very_short=False, include_inventory=True, invalid_queue_receipt=False, cached_bytes=0, pool_bytes=0, total_bytes=200000, reserve_bytes=1000,
-            bounded=False, timeout_first=False, trace=None):
+            bounded=False, preserve_implicit_bitmap_banks=False, timeout_first=False, trace=None):
     native = tmp_path / 'native'
     native.write_bytes(b'native test executable')
     graph = GraphDefinition.permutation([[1, 0, 2], [0, 2, 1]], [0, 1, 2])
@@ -93,7 +93,8 @@ def measure(tmp_path, *, explicit_lane=None, explicit_queue=None,
         bounded_options = {'capacity_slowdown_limit': 4.0, 'pilot_limit': 3, 'pilot_wall_seconds': 5} if bounded else {}
         result = autotune.choose_profile(
             graph, [0, 1], None, 90, str(native), env,
-            allow_specialized=False, fixed_shards=4, **bounded_options)
+            allow_specialized=False, fixed_shards=4,
+            preserve_implicit_bitmap_banks=preserve_implicit_bitmap_banks, **bounded_options)
     return result, calls, env
 
 
@@ -217,7 +218,8 @@ def test_capacity_cache_rechecks_actual_inventory_dimensions(tmp_path, change):
 @pytest.mark.parametrize('bitmap', [False, True])
 def test_capacity_bound_times_a_real_balanced_anchor_and_rejects_slow_capacity(tmp_path, bitmap):
     trace = []
-    result, calls, initial_env = measure(tmp_path, bitmap=bitmap, capacity_loss=True, bounded=True, trace=trace)
+    result, calls, initial_env = measure(tmp_path, bitmap=bitmap, capacity_loss=True, bounded=True,
+                                         preserve_implicit_bitmap_banks=not bitmap, trace=trace)
     assert calls == [(4, 16384), (4, 16384), (1, 2048)]
     assert len(trace) == 3 and all(isinstance(probe[3], float) and probe[4] <= 4 for probe in trace)
     assert len({probe[3] for probe in trace}) == 1
@@ -233,6 +235,21 @@ def test_capacity_bound_times_a_real_balanced_anchor_and_rejects_slow_capacity(t
     assert final_env['MGBFS_MEMORY_PRESET'] == 'balanced'
     assert 'MGBFS_SEGMENT_COMPACT_POS' not in final_env
     assert 'MGBFS_BITMAP_BANKS' not in final_env
+
+
+def test_automatic_capacity_pilots_keep_implicit_bitmap_banks(tmp_path):
+    trace = []
+    result, calls, initial_env = measure(tmp_path, bitmap=True, bounded=True,
+                                         preserve_implicit_bitmap_banks=True, timeout_first=True, trace=trace)
+    assert 2 <= len(calls) <= 3
+    assert all(probe[:3] == ('max_capacity', None, '2') for probe in trace)
+    assert result['timed_out_trials'] == ['pilot-0']
+    assert not result['measured']
+    assert result['capacity_slowdown']['status'] == 'UNVERIFIED'
+    assert 'observed_ratio' not in result['capacity_slowdown']
+    final_env = autotune._profile_environment(initial_env, result)
+    assert final_env['MGBFS_MEMORY_PRESET'] == 'max_capacity'
+    assert final_env['MGBFS_BITMAP_BANKS'] == '2'
 
 
 def test_lost_balanced_pilot_does_not_certify_slowdown(tmp_path):

@@ -342,8 +342,13 @@ def _validate_segmented_resource_report(report,output,digest,devices,env,state_e
          'snapshot_current_count':len(current),'snapshot_current_layer_size':sizes[-1],
          'validation_scope':'rank consensus, layer counts and bounded snapshot integrity; fully retained layers can be compared across probes; not an independent full-prefix state proof'}
 
-def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True,fixed_shards=None,capacity_slowdown_limit=None,pilot_limit=None,pilot_wall_seconds=None,startup_deadline=None):
+def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True,fixed_shards=None,capacity_slowdown_limit=None,pilot_limit=None,pilot_wall_seconds=None,startup_deadline=None,preserve_implicit_bitmap_banks=False):
  if pilot_wall_seconds is not None and (type(pilot_wall_seconds) is not int or pilot_wall_seconds<2):raise ValueError('INVALID_PROFILE_PILOT_WALL_SECONDS')
+ # A real balanced anchor drops the implicit layout and allocates a third bank.
+ skip_balanced_anchor=(preserve_implicit_bitmap_banks and capacity_slowdown_limit is not None
+  and env.get('MGBFS_EXPERIMENTAL_SEGMENTED24')=='1' and env.get('MGBFS_EXPERIMENTAL_BITMAP')=='1'
+  and env.get('MGBFS_MEMORY_PRESET')=='max_capacity'
+  and env.get('_MGBFS_PRESET_IMPLICIT_LAYOUT')=='1' and env.get('MGBFS_BITMAP_BANKS')=='2')
  started=time.monotonic() if pilot_wall_seconds is not None or startup_deadline is not None else None
  deadline=startup_deadline
  if pilot_wall_seconds is not None:
@@ -353,13 +358,18 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   try:
    return _choose_profile(graph,devices,capacity,max_seconds,native,env,
     allow_specialized=allow_specialized,fixed_shards=fixed_shards,capacity_slowdown_limit=capacity_slowdown_limit,
-    pilot_limit=pilot_limit,pilot_wall_seconds=pilot_wall_seconds,budget_deadline=deadline,started=started)
+    pilot_limit=pilot_limit,pilot_wall_seconds=pilot_wall_seconds,budget_deadline=deadline,started=started,
+    skip_balanced_anchor=skip_balanced_anchor)
   except ProfileBudgetExpired:
-   return {'status':'TUNING_BUDGET_EXHAUSTED_CONSERVATIVE_PROFILE','shards':fixed_shards,
+   result={'status':'TUNING_BUDGET_EXHAUSTED_CONSERVATIVE_PROFILE','shards':fixed_shards,
     'measured':False,'seconds':time.monotonic()-started}
+   if skip_balanced_anchor:
+    result.update(segment_runtime_preset='max_capacity',capacity_slowdown={
+     'status':'UNVERIFIED','reason':'MATCHED_PREFIX_UNAVAILABLE','limit':capacity_slowdown_limit})
+   return result
 
 
-def _choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized,fixed_shards,capacity_slowdown_limit,pilot_limit,pilot_wall_seconds,budget_deadline,started):
+def _choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized,fixed_shards,capacity_slowdown_limit,pilot_limit,pilot_wall_seconds,budget_deadline,started,skip_balanced_anchor):
  # Omitted peer policy and public default auto are the same configuration.
  env=dict(env);env.setdefault('MGBFS_PEER_TRANSPORT','auto')
  if capacity_slowdown_limit is not None and (type(capacity_slowdown_limit) not in (int,float) or not 1<=capacity_slowdown_limit<float('inf')):raise ValueError('INVALID_CAPACITY_SLOWDOWN_LIMIT')
@@ -478,7 +488,7 @@ def _choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specia
   key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
   root=Path(os.environ.get('MGBFS_PROFILE_CACHE',str(Path.home()/'.cache/multigpubfs/profiles')));cache=root/(key+'.json')
   profile_cache_read_status={'status':'DISABLED','stage':'read','errno':None}
-  if capacity_cache_safe and dependency is not None and hardware.returncode==0 and topology.returncode==0:
+  if not skip_balanced_anchor and capacity_cache_safe and dependency is not None and hardware.returncode==0 and topology.returncode==0:
    saved,profile_cache_read_status=_read_profile_cache(cache)
    saved=saved or {}
    if bounded_capacity:
@@ -613,7 +623,7 @@ def _choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specia
     runs.insert(1,(runs[0][0],'1',None))
   runtime_preset=env.get('MGBFS_MEMORY_PRESET','balanced')
   scheduled=[(*r,runtime_preset) for r in runs]
-  if bounded_capacity:
+  if bounded_capacity and not skip_balanced_anchor:
    balanced_env=_balanced_segment_environment(env)
    first_admitted=next((e for e in admitted if e[0]==baseline_shards and e[4]==min(baseline_shards,4)),admitted[0])
    balanced_queue=int(balanced_env.get('MGBFS_SEGMENT_QUEUE_CAP',first_admitted[-1]['queue_capacity']))
@@ -627,7 +637,7 @@ def _choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specia
    now=time.monotonic()
    remaining=max_seconds-(now-started) if budget_deadline is None else budget_deadline-now
    if remaining<(limit+1 if pilot_wall_seconds is None else 2):break
-   candidate_base=balanced_env if bounded_capacity and runtime_preset=='balanced' else env
+   candidate_base=balanced_env if bounded_capacity and not skip_balanced_anchor and runtime_preset=='balanced' else env
    candidate_env=dict(candidate_base,MGBFS_GENERIC_TRANSPORT=transport,MGBFS_GENERIC_SORT=order)
    if lane is not None:candidate_env['MGBFS_SEGMENT_OWNER_LANES']=str(lane)
    if segmented:candidate_env['MGBFS_SEGMENT_EXACT_EXCHANGE']=exchange

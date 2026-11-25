@@ -408,7 +408,7 @@ class BfsSession:
             )
             tuning = {"capacity_slowdown_limit": 4.0}
             if self._tune == "auto":
-                tuning.update(pilot_limit=3, pilot_wall_seconds=5)
+                tuning.update(pilot_limit=3, pilot_wall_seconds=5, preserve_implicit_bitmap_banks=True)
                 if deadline is not None:
                     tuning["startup_deadline"] = deadline
             report = run_graph(
