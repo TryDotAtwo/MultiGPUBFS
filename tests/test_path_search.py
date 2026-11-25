@@ -819,7 +819,8 @@ def test_native_forward_window_streams_csr_and_tracks_partial_length(tmp_path, m
 
 def test_native_window_consensus_rejects_missing_cut_layers():
     rank = dict(status="COMPLETE", stop_reason=None, graph_completed_through_depth=4,
-                first_cut_length=1, last_cut_length=4, side_layer_rows=[[1, 2, 3], [1, 2, 3]])
+                first_cut_length=1, last_cut_length=4, side_layer_rows=[[1, 2, 3], [1, 2, 3]],
+                lineage_peak_bytes=64, lineage_csr_bytes=48)
     assert path_search._agree_window_receipts([rank])["last_cut_length"] == 4
     missing = dict(rank, side_layer_rows=[[1, 2], [1, 2, 3]])
     with pytest.raises(RuntimeError, match="NATIVE_WINDOW_CONSENSUS_MISMATCH"):

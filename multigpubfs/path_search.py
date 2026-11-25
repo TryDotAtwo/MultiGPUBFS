@@ -387,7 +387,7 @@ def _run_native_nearest(native, graph, targets, output, deadline, check, add, re
     _record_native_nearest(result, graph, targets, check, add, report)
 
 
-def _record_native_nearest(result, graph, targets, check, add, report):
+def _validate_native_nearest_receipt(result, target_count, generator_count):
     try:
         status = result["status"]
         distance = result["d_min"]
@@ -404,15 +404,21 @@ def _record_native_nearest(result, graph, targets, check, add, report):
                                       or distance is not None and checked_depth != distance):
         raise RuntimeError("NATIVE_PATH_RESULT_INVALID")
     if status == "COMPLETE":
-        if (reason is not None or distance is None or type(target) is not int or not 0 <= target < len(targets)
+        if (reason is not None or distance is None or type(target) is not int or not 0 <= target < target_count
                 or len(labels) != distance
-                or any(type(label) is not int or not 0 <= label < graph.generator_count for label in labels)):
+                or any(type(label) is not int or not 0 <= label < generator_count for label in labels)):
             raise RuntimeError("NATIVE_PATH_RESULT_INVALID")
     elif (target is not None or labels
           or status == "UNREACHABLE" and (distance is not None or reason is not None)
           or status == "INCOMPLETE" and reason not in ("TIME_LIMIT", "CANCELLED", "CUDA_MEMORY", "LINEAGE_DISK_FULL", "DEPTH_LIMIT")
           or status not in ("UNREACHABLE", "INCOMPLETE")):
         raise RuntimeError("NATIVE_PATH_RESULT_INVALID")
+    return status, distance, reason, target, labels, checked_depth
+
+
+def _record_native_nearest(result, graph, targets, check, add, report):
+    status, distance, reason, target, labels, checked_depth = _validate_native_nearest_receipt(
+        result, len(targets), graph.generator_count)
     report.update(status=status, stop_reason=reason, d_min=distance, max_length=distance)
     if "search_confirmed_through_depth" in result:
         report["search_confirmed_through_depth"] = checked_depth
@@ -444,10 +450,11 @@ def _record_native_nearest(result, graph, targets, check, add, report):
             report["completed_through_length"] = distance
 
 
-def _agree_window_receipts(replies):
+def _agree_window_receipts(replies, *, bidirectional=None):
     if not replies:
         raise RuntimeError("NATIVE_WINDOW_CONSENSUS_MISMATCH")
-    bidirectional = "side_layer_rows" in replies[0]
+    if bidirectional is None:
+        bidirectional = "side_layer_rows" in replies[0]
     fields = ("status", "stop_reason", "graph_completed_through_depth")
     if bidirectional:
         fields += ("first_cut_length", "last_cut_length")
@@ -461,6 +468,8 @@ def _agree_window_receipts(replies):
     def shape(reply):
         if bidirectional != ("side_layer_rows" in reply):
             raise ValueError
+        if any(not nonnegative(reply[key]) for key in ("lineage_peak_bytes", "lineage_csr_bytes")):
+            raise ValueError
         layers = reply["side_layer_rows"] if bidirectional else (reply["layer_rows"],)
         if len(layers) != (2 if bidirectional else 1):
             raise ValueError
@@ -470,6 +479,10 @@ def _agree_window_receipts(replies):
 
     try:
         sizes = shape(first)
+        status, reason = first["status"], first["stop_reason"]
+        if not (status == "COMPLETE" and reason is None
+                or status == "INCOMPLETE" and isinstance(reason, str) and reason):
+            raise ValueError
         if any(any(reply[key] != first[key] for key in fields) or shape(reply) != sizes
                for reply in replies[1:]):
             raise ValueError

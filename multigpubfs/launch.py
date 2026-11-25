@@ -663,25 +663,29 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
     preserve_native_failure(jobs,output,failure,when='after_cleanup')
    for log in logs:log.close()
    if cleanup_error is not None:raise cleanup_error
-  if _path_targets is not None:
-   try:
-    replies=[json.loads((output/f'rank-{rank}'/'path.json').read_text()) for rank in range(len(devices))]
-   except (OSError, ValueError) as error:
-    raise RuntimeError('NATIVE_DISTRIBUTED_PATH_RECEIPT_INVALID') from error
-   if _path_window is not None:
-    from .path_search import _agree_window_receipts
-    result=_agree_window_receipts(replies)
-   else:
-    if not replies or any(reply!=replies[0] for reply in replies[1:]):
-     raise RuntimeError('NATIVE_DISTRIBUTED_PATH_CONSENSUS_MISMATCH')
-    result=replies[0]
-   if communication is not None and communication.get('status')=='VERIFIED':
-    from .generic_session import _active
-    from .nccl_preflight import bind_communication_group
-    bind_communication_group(_active)
-   from .generic_session import path_workspace
-   return dict(result, native_workspace={'ranks':[path_workspace(job) for job in jobs]})
   try:
+   if _path_targets is not None:
+    try:
+     replies=[json.loads((output/f'rank-{rank}'/'path.json').read_text()) for rank in range(len(devices))]
+    except (OSError, ValueError) as error:
+     raise RuntimeError('NATIVE_DISTRIBUTED_PATH_RECEIPT_INVALID') from error
+    if any(not isinstance(reply,dict) for reply in replies):
+     raise RuntimeError('NATIVE_DISTRIBUTED_PATH_RECEIPT_INVALID')
+    if _path_window is not None:
+     from .path_search import _agree_window_receipts
+     result=_agree_window_receipts(replies,bidirectional=_path_bidirectional)
+    else:
+     if not replies or any(reply!=replies[0] for reply in replies[1:]):
+      raise RuntimeError('NATIVE_DISTRIBUTED_PATH_CONSENSUS_MISMATCH')
+     result=replies[0]
+     from .path_search import _validate_native_nearest_receipt
+     _validate_native_nearest_receipt(result,len(_path_targets),graph.generator_count)
+    if communication is not None and communication.get('status')=='VERIFIED':
+     from .generic_session import _active
+     from .nccl_preflight import bind_communication_group
+     bind_communication_group(_active)
+    from .generic_session import path_workspace
+    return dict(result, native_workspace={'ranks':[path_workspace(job) for job in jobs]})
    parts=[_receipt(output/f'rank-{rank}',digest) for rank in range(len(devices))]
    from .traversal_receipt import (merge_rank_traversal, merge_terminal_evidence,
                                   read_terminal_evidence, write_terminal_evidence)
