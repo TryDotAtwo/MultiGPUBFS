@@ -118,16 +118,37 @@ impl<T: Send + 'static> TransitionWriter<T> {
         }
     }
 
-    pub(crate) fn finish(mut self) -> Result<(TransitionSpool, Option<String>, Vec<T>)> {
+    pub(crate) fn finish(
+        mut self,
+        mut checkpoint: impl FnMut() -> Result<()>,
+    ) -> Result<(TransitionSpool, Option<String>, Vec<T>)> {
         drop(self.input.take());
-        // Every accepted item still holds one of `slots` credits until reclaimed.
-        // The completion queue can therefore hold every result during the join.
+        let mut returned = Vec::with_capacity(self.outstanding);
+        loop {
+            if self.failure.get().is_none() {
+                if let Err(error) = checkpoint() {
+                    let _ = self.failure.set(error);
+                }
+            }
+            if self.outstanding == 0 {
+                break;
+            }
+            match self.output.recv_timeout(Duration::from_millis(1)) {
+                Ok(item) => {
+                    self.outstanding -= 1;
+                    returned.push(item);
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        // Every credit remains owned until its write returns. A stop skips
+        // queued writes, while an active filesystem call must still finish.
         let worker = self.worker.take().expect("live writer has a worker");
         let spool = worker
             .join()
             .map_err(|_| "PATH_LINEAGE_WRITER_PANIC".to_owned())?;
-        let returned: Vec<_> = self.output.try_iter().collect();
-        if returned.len() != self.outstanding {
+        if self.outstanding != 0 {
             return Err("PATH_LINEAGE_WRITER_LOST_CREDIT".into());
         }
         Ok((spool, self.failure.get().cloned(), returned))
@@ -181,10 +202,65 @@ mod tests {
         );
         resume.send(()).unwrap();
         assert_eq!(writer.reclaim_timeout(Duration::from_secs(5)), Some(11));
-        let (spool, failure, returned) = writer.finish().unwrap();
+        let (spool, failure, returned) = writer.finish(|| Ok(())).unwrap();
         assert_eq!(failure.as_deref(), Some("LINEAGE_LIMIT"));
         assert_eq!(returned, [2, 3]);
         assert_eq!(spool.pending.len(), 1);
+        drop(spool);
+        assert!(!directory.exists());
+    }
+
+    #[test]
+    fn cancellation_during_finish_skips_queued_writes_and_returns_owned_credits() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Instant;
+
+        let directory =
+            std::env::temp_dir().join(format!("mgbfs-csr-writer-stop-{}", std::process::id()));
+        let spool = TransitionSpool::new(directory.clone(), 1024).unwrap();
+        let (writing, active) = mpsc::channel();
+        let (release, disk) = mpsc::channel();
+        let mut writer = TransitionWriter::new(spool, 2, move |_, item| {
+            assert_eq!(*item, 1, "queued write started after cancellation");
+            writing.send(()).unwrap();
+            disk.recv_timeout(Duration::from_secs(5)).unwrap();
+            Ok(())
+        })
+        .unwrap();
+        writer.submit(1).unwrap();
+        writer.submit(2).unwrap();
+        active.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let failure = Arc::clone(&writer.failure);
+        let stop = Arc::new(AtomicBool::new(false));
+        let running = Arc::clone(&stop);
+        let (entered, draining) = mpsc::channel();
+        let finishing = thread::spawn(move || {
+            let mut entered = Some(entered);
+            writer.finish(|| {
+                if let Some(entered) = entered.take() {
+                    entered.send(()).unwrap();
+                }
+                if running.load(Ordering::Acquire) {
+                    Err("TIME_LIMIT".into())
+                } else {
+                    Ok(())
+                }
+            })
+        });
+        draining.recv_timeout(Duration::from_secs(5)).unwrap();
+        stop.store(true, Ordering::Release);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while failure.get().is_none() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(failure.get().map(String::as_str), Some("TIME_LIMIT"));
+        assert!(!finishing.is_finished());
+
+        release.send(()).unwrap();
+        let (spool, failure, returned) = finishing.join().unwrap().unwrap();
+        assert_eq!(failure.as_deref(), Some("TIME_LIMIT"));
+        assert_eq!(returned, [1, 2]);
         drop(spool);
         assert!(!directory.exists());
     }

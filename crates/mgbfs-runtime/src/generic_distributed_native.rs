@@ -516,7 +516,7 @@ impl GenericDistributedBfs{
   })();
   // An early exit may bypass the layer epilogue. Keep its disk high-water
   // mark and release every queued copy without admitting the partial layer.
-  let cleanup=tile.readback.finish(lineage,false);
+  let cleanup=tile.readback.finish(lineage,false,None);
   advanced.and_then(|state| cleanup.map(|()| state))
  }
  pub(crate) fn advance_nearest(&mut self, parents:&Buffer, checkpoint:&dyn Fn()->Result<()>)->Result<DistributedAdvance>{

@@ -271,19 +271,24 @@ impl LineageTile {
         result
     }
 
-    pub(super) fn finish(&mut self, mut writer: Writer, complete: bool) -> Result<FinishedSpool> {
+    pub(super) fn finish(
+        &mut self,
+        mut writer: Writer,
+        complete: bool,
+        mut checkpoint: impl FnMut() -> Result<()>,
+    ) -> Result<FinishedSpool> {
         let drained = crate::generic_native::checked!(cudaStreamSynchronize, unsafe {
             cudaStreamSynchronize(self.copy.ptr)
         });
         let dispatch = if complete && drained.is_ok() {
-            self.dispatch_copies(&mut writer)
+            checkpoint().and_then(|()| self.dispatch_copies(&mut writer))
         } else {
             writer.discard();
             Ok(())
         };
         self.free
             .extend(self.pending.drain(..).map(|batch| batch.slot));
-        let (spool, failure, finished) = writer.finish()?;
+        let (spool, failure, finished) = writer.finish(checkpoint)?;
         self.free
             .extend(finished.into_iter().map(|batch| batch.slot));
         drained?;

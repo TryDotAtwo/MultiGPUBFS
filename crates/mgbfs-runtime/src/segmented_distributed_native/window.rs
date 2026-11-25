@@ -401,7 +401,12 @@ impl SegmentedDistributedBfs {
             writer,
         } = self.window.as_mut().unwrap().expansion.take().unwrap();
         let complete = matches!(result, Ok(DistributedAdvance::Layer { .. })) && boundary == 0;
-        let finished = self.window.as_mut().unwrap().tile.finish(writer, complete);
+        let finished = self
+            .window
+            .as_mut()
+            .unwrap()
+            .tile
+            .finish(writer, complete, || run::checkpoint(stop));
         if matches!(result, Ok(DistributedAdvance::Layer { .. })) {
             self.release_window_arena(source, source_index)?;
         } else {

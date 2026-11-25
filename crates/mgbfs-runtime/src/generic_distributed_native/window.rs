@@ -137,7 +137,7 @@ pub(super) fn finish_window_lineage(
         if path_error.is_none() {
             *path_error = checkpoint.and_then(|check| check().err());
         }
-        let result = tile.readback.finish(lineage, path_error.is_none());
+        let result = tile.readback.finish(lineage, path_error.is_none(), checkpoint);
         if path_error.is_none() {
             *path_error = result.err();
         }
@@ -293,26 +293,32 @@ impl WindowReadback {
         queued
     }
 
-    pub(super) fn finish(&mut self, lineage: &mut WindowLineage, complete: bool) -> Result<()> {
+    pub(super) fn finish(
+        &mut self,
+        lineage: &mut WindowLineage,
+        complete: bool,
+        checkpoint: Option<&dyn Fn() -> Result<()>>,
+    ) -> Result<()> {
         let Some(mut writer) = lineage.writer.take() else {
             return Ok(());
         };
         let drained = crate::generic_native::checked!(cudaStreamSynchronize, unsafe {
             cudaStreamSynchronize(self.copy.ptr)
         });
+        let check = || checkpoint.map_or(Ok(()), |check| check());
         let submitted = if complete && drained.is_ok() {
-            self.service(&mut writer)
+            check().and_then(|()| self.service(&mut writer))
         } else {
             writer.discard();
             Ok(())
         };
         self.free.extend(self.pending.drain(..));
-        let (spool, failure, returned) = writer.finish()?;
+        let (spool, failure, returned) = writer.finish(check)?;
         self.free.extend(returned);
         lineage.spool = Some(spool);
-        drained.and(submitted)?;
+        drained?;
         if complete {
-            if let Some(error) = failure {
+            if let Some(error) = failure.or_else(|| submitted.err()) {
                 return Err(error);
             }
         }

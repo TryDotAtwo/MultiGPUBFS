@@ -33,7 +33,7 @@ fn query_stop(seconds: u64) -> impl Fn() -> u32 {
     }
 }
 
-fn checkpoint(stop: &impl Fn() -> u32) -> Result<()> {
+pub(super) fn checkpoint(stop: &impl Fn() -> u32) -> Result<()> {
     stop_reason(stop()).map_or(Ok(()), |reason| Err(reason.into()))
 }
 
@@ -289,7 +289,6 @@ impl SegmentedDistributedBfs {
                 // the requested window), and only after all ranks agree.
                 let mut pending = PendingFiles::default();
                 let written = (|| {
-                    checkpoint()?;
                     let half = length / 2;
                     if forward.depth != u64::from(half)
                         || reverse.depth != u64::from(half + length % 2)
@@ -306,6 +305,7 @@ impl SegmentedDistributedBfs {
                             &mut lineage,
                         )?
                     } else {
+                        checkpoint()?;
                         0
                     };
                     let occupied = lineage.observe(csr_bytes)?;
@@ -445,12 +445,14 @@ impl SegmentedDistributedBfs {
     ) -> Result<Option<&'static str>> {
         let mut pending = PendingFiles::default();
         let local = (|| {
-            checkpoint()?;
             let csr_bytes = match spool {
                 Some(spool) => {
                     self.finish_window_csr(output, spool, &mut pending, checkpoint, lineage)?
                 }
-                None => 0,
+                None => {
+                    checkpoint()?;
+                    0
+                }
             };
             let target_file =
                 pending.claim_records(output.join(format!("{}.targets", self.depth)))?;
@@ -486,6 +488,7 @@ impl SegmentedDistributedBfs {
         if let Some(error) = failure {
             return Err(error);
         }
+        checkpoint()?;
         let by_shard = self.window_rows_by_shard()?;
         if by_shard
             .iter()
