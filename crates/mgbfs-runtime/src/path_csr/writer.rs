@@ -1,4 +1,4 @@
-use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
 use std::sync::{Arc, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -88,18 +88,34 @@ impl<T: Send + 'static> TransitionWriter<T> {
     }
 
     pub(crate) fn try_reclaim(&mut self) -> Option<T> {
-        let item = self.output.try_recv().ok()?;
-        self.outstanding -= 1;
-        Some(item)
+        match self.output.try_recv() {
+            Ok(item) => {
+                self.outstanding -= 1;
+                Some(item)
+            }
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                let _ = self.failure.set("PATH_LINEAGE_WRITER_DISCONNECTED".into());
+                None
+            }
+        }
     }
 
     pub(crate) fn reclaim_timeout(&mut self, timeout: Duration) -> Option<T> {
         if self.outstanding == 0 {
             return None;
         }
-        let item = self.output.recv_timeout(timeout).ok()?;
-        self.outstanding -= 1;
-        Some(item)
+        match self.output.recv_timeout(timeout) {
+            Ok(item) => {
+                self.outstanding -= 1;
+                Some(item)
+            }
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => {
+                let _ = self.failure.set("PATH_LINEAGE_WRITER_DISCONNECTED".into());
+                None
+            }
+        }
     }
 
     pub(crate) fn finish(mut self) -> Result<(TransitionSpool, Option<String>, Vec<T>)> {
