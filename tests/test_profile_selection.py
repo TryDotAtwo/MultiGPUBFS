@@ -173,7 +173,10 @@ def test_public_session_replays_pinned_recipe_and_keeps_manual_and_fallback_path
     assert (len(topology_calls), len(inventory_calls), len(plans)) == (4, 2, 1)
 
 
-def test_public_balanced_replays_faster_capacity_recipe_and_can_fall_back(tmp_path, monkeypatch, registry_case):
+@pytest.mark.parametrize("capacity_seconds, runtime_drift", [(1.0, False), (3.0, False), (3.0, True)])
+def test_public_presets_report_historical_bounds_for_the_replayed_recipe(
+    tmp_path, monkeypatch, registry_case, capacity_seconds, runtime_drift,
+):
     case = registry_case
     catalog = json.loads(case["catalog"].read_bytes())
     entry = catalog["entries"][0]
@@ -186,7 +189,7 @@ def test_public_balanced_replays_faster_capacity_recipe_and_can_fall_back(tmp_pa
     capacity = dict(balanced, **plan)
     capacity.update(memory_backend="permutation_bitmap", strategy="atomic", resident_codec="pack4-v1",
                     banks=2, owner_cuts=None, hash_lookup_series_limit=None, batch_hash_prefix_probe=False,
-                    packet_wire=wire, bfs_seconds=1.0, peak_vram_bytes_by_rank=[100, 100])
+                    packet_wire=wire, bfs_seconds=capacity_seconds, peak_vram_bytes_by_rank=[100, 100])
     entry.update(profiles={"balanced": balanced, "max_capacity": capacity},
                  capacity_verification="LOWER_PHYSICAL_PEAK")
     case["catalog"].write_text(json.dumps(catalog), encoding="utf-8")
@@ -225,6 +228,8 @@ def test_public_balanced_replays_faster_capacity_recipe_and_can_fall_back(tmp_pa
         report.update(backend="EXPERIMENTAL_PERMUTATION_BITMAP", bfs_seconds=capacity["bfs_seconds"])
         for rank in report["segment_memory_by_rank"]:
             rank["packet_transport"] = dict(wire, tx_exchange_slots=3, rx_exchange_slots=3)
+        if runtime_drift and len(launched) == 2:
+            report["segment_memory_by_rank"][0]["rows_per_bank"] += 1
         return report
 
     monkeypatch.delenv("WORLD_SIZE", raising=False)
@@ -242,15 +247,25 @@ def test_public_balanced_replays_faster_capacity_recipe_and_can_fall_back(tmp_pa
         reject_capacity = True
         fallback = session.bfs(case["graph"], preset="balanced")
 
-    assert admitted == ["max_capacity", "max_capacity", "max_capacity", "balanced"]
-    assert launched == ["maxmemory", "maxmemory", "balanced"]
-    for result, requested, recipe in zip((fastest, lowest, fallback),
-                                         ("balanced", "maxmemory", "balanced"),
-                                         ("maxmemory", "maxmemory", "balanced")):
-        policy = result.report["session_policy"]
-        receipt = policy["profile_registry"]
-        assert policy["preset"] == receipt["requested_preset"] == requested
-        assert receipt["recipe_preset"] == recipe and receipt["runtime_geometry"] == "MATCHED"
+    capacity_faster = capacity_seconds < balanced["bfs_seconds"]
+    assert admitted == (["max_capacity", "max_capacity", "max_capacity", "balanced"] if capacity_faster
+                        else ["balanced", "balanced", "max_capacity", "balanced"])
+    assert launched == ["maxmemory" if capacity_faster else "balanced", "maxmemory", "balanced"]
+    fastest_recipe = fastest.report["session_policy"]["profile_registry"]
+    fallback_recipe = fallback.report["session_policy"]["profile_registry"]
+    assert fastest_recipe["recipe_preset"] == launched[0] and fastest_recipe["runtime_geometry"] == "MATCHED"
+    assert fallback_recipe["recipe_preset"] == "balanced" and fallback_recipe["runtime_geometry"] == "MATCHED"
+
+    policy = lowest.report["session_policy"]
+    receipt = policy["profile_registry"]
+    assert policy["preset"] == receipt["requested_preset"] == receipt["recipe_preset"] == "maxmemory"
+    assert receipt["runtime_geometry"] == ("CHANGED" if runtime_drift else "MATCHED")
+    assert receipt["capacity_comparison"]["baseline_evidence_sha256"] == case["evidence"]
+    assert receipt["capacity_comparison"]["baseline_arm"] == ("max_capacity" if capacity_faster else "balanced")
+    assert receipt["historical_ratio"] == capacity_seconds / min(capacity_seconds, balanced["bfs_seconds"])
+    bound = "MEASURED_FULL_BFS_HISTORICAL_BOUND"
+    assert policy["capacity_slowdown_status"] == ("UNVERIFIED" if runtime_drift else bound)
+    assert policy["cross_backend_slowdown_status"] == ("UNVERIFIED" if runtime_drift or capacity_faster else bound)
 
 
 @pytest.mark.parametrize("metadata_timeout", [False, True])
@@ -398,8 +413,10 @@ def test_external_rank_uses_prepared_admission_for_the_native_command(tmp_path, 
         _active.reset(context)
 
 
-@pytest.mark.parametrize("reject_fastest", [False, True])
-def test_registry_capacity_compares_against_fastest_live_recipe(monkeypatch, registry_case, reject_fastest):
+@pytest.mark.parametrize("reject_fastest, unknown_pressure", [(False, False), (True, False), (False, True)])
+def test_registry_capacity_compares_against_fastest_live_recipe(
+    monkeypatch, registry_case, reject_fastest, unknown_pressure,
+):
     case = registry_case
     catalog = json.loads(case["catalog"].read_bytes())
     first = catalog["entries"][0]
@@ -413,6 +430,9 @@ def test_registry_capacity_compares_against_fastest_live_recipe(monkeypatch, reg
         fastest["rank_geometry"] = [dict(rank, free_bytes_at_admission=12 << 30)
                                      for rank in fastest["rank_geometry"]]
     first["profiles"] = {"balanced": fastest, "max_capacity": arm(4, 105)}
+    if unknown_pressure:
+        for old_arm in first["profiles"].values():
+            old_arm["pressure_namespace"] = None
     capacity = arm(6 if reject_fastest else 3, 120)
     catalog["entries"].append(dict(first, evidence_sha256="d" * 64,
                                    profiles={"balanced": arm(2, 200), "max_capacity": capacity},
@@ -465,3 +485,41 @@ def test_stalled_catalog_returns_to_startup_fallback(tmp_path, monkeypatch, regi
         inventory=lambda: pytest.fail("no catalog"), packet_address=None,
     )
     assert recipe is None and status["status"] == "REGISTRY_STARTUP_DEADLINE"
+
+
+@pytest.mark.parametrize("preset", ["balanced", "maxmemory"])
+@pytest.mark.parametrize("disable_bound", [False, True])
+def test_registry_hash_replay_respects_live_lookup_bound(monkeypatch, registry_case, preset, disable_bound):
+    case = registry_case
+    catalog = json.loads(case["catalog"].read_bytes())
+    bounded = dict(case["profile"], pressure_namespace="ambient", peak_vram_bytes_by_rank=[200, 200])
+    unbounded = dict(bounded, strategy="warp", bfs_seconds=1.0, hash_lookup_series_limit=None,
+                     batch_hash_prefix_probe=False, peak_vram_bytes_by_rank=[100, 100])
+    catalog["entries"][0].update(profiles={"balanced": bounded, "max_capacity": unbounded},
+                                 capacity_verification="LOWER_PHYSICAL_PEAK")
+    case["catalog"].write_text(json.dumps(catalog), encoding="utf-8")
+    capabilities = dict(case["capabilities"], segmented_strategies_v1={"batch": True, "warp": True})
+    env = {"MGBFS_SEGMENT_HASH_SERIES": "0"} if disable_bound else {}
+    admitted = []
+
+    def graph_plan(command, *, env, **_):
+        admitted.append(env["MGBFS_SEGMENT_STRATEGY"])
+        return CompletedProcess(command, 0, stdout=json.dumps({"plan": case["plan"], "owner_cuts": case["cuts"]}))
+
+    monkeypatch.setattr(native_distribution, "runtime_identity", lambda *_: case["runtime"])
+    monkeypatch.setattr(profile_selection, "query", graph_plan)
+    recipe, status = profile_selection.select_registry_recipe(
+        {"source": str(case["catalog"]), "sha256": None}, case["graph"], preset, "fake-native", env,
+        capabilities, time.monotonic() + 5,
+        hardware=lambda: (case["inventory"], case["devices"], case["topology"], case["driver"]),
+        inventory=lambda: case["inventory"], packet_address=None,
+    )
+    if disable_bound:
+        assert admitted == ["warp"] and recipe.memory.strategy == "warp"
+    else:
+        assert admitted == ["batch"]
+        if preset == "maxmemory":
+            assert recipe is None
+        else:
+            assert recipe.memory.strategy == "batch"
+            assert recipe.settings["MGBFS_SEGMENT_HASH_SERIES"] == "1"

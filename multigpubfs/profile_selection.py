@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .artifact_paths import artifact_path
-from .memory_admission import TraversalMemory
+from .memory_admission import TraversalMemory, bounded_hash_available
 from .process_control import ProfileBudgetExpired, profile_budget, profile_timeout, query
 
 
@@ -81,11 +81,15 @@ def _compatible_recipe(profile, env, capabilities, packet_address):
             or codec == "pack4-v1" and capabilities.get("bitmap_pack4_experimental_v1") is not True
             or codec == "alphabet8-v1" and capabilities.get("segmented_resident_alphabet8_v1") is not True
             or profile["compact_transport"] and capabilities.get("segmented_packet_transport_v1") is not True
-            or profile["exact_exchange"] and capabilities.get("segmented_exact_exchange_v1") is not True
-            or backend == "segmented24" and strategy == "batch" and (
-                profile["hash_lookup_series_limit"] != 64
-                or capabilities.get("segmented_hash_series_v1") is not True)):
+            or profile["exact_exchange"] and capabilities.get("segmented_exact_exchange_v1") is not True):
         return None
+    if backend == "segmented24":
+        bounded = bounded_hash_available(capabilities, env)
+        if strategy == "batch":
+            if not bounded or profile["hash_lookup_series_limit"] != 64:
+                return None
+        elif bounded:
+            return None
 
     settings = {
         "MGBFS_SEGMENT_EXACT_EXCHANGE": profile["exact_exchange"],
@@ -202,7 +206,10 @@ def registry_run_receipt(status, expected, report):
                and all(actual[field] == expected[field] for field in fields)
                and all(left[field] == right[field] for left, right in
                        zip(actual["rank_geometry"], expected["rank_geometry"]) for field in rank_fields))
-    return dict(status, runtime_geometry="MATCHED" if matches else "CHANGED")
+    receipt = dict(status, runtime_geometry="MATCHED" if matches else "CHANGED")
+    if matches and "capacity_comparison" in status:
+        receipt["capacity_slowdown_status"] = "MEASURED_FULL_BFS_HISTORICAL_BOUND"
+    return receipt
 
 
 def _load_catalog(spec, env):
@@ -255,7 +262,7 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
                                           legacy_cluster=True)
                 matches = matching_profiles(catalog, graph.digest(), legacy_key, identity)
             namespace = env.get("MGBFS_PROFILE_PRESSURE_NAMESPACE", "ambient")
-            acceptable = {None, "ambient"} if preset == "balanced" and namespace == "ambient" else {namespace}
+            acceptable = {None, "ambient"} if namespace == "ambient" else {namespace}
             matches = [entry for entry in matches if
                        all(arm["pressure_namespace"] == entry["profiles"]["balanced"]["pressure_namespace"]
                            for arm in entry["profiles"].values())
@@ -304,13 +311,15 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
             if preset == "maxmemory":
                 baseline = item
                 baseline_peaks = recipe.evidence["peak_vram_bytes_by_rank"]
-                if not baseline_peaks:
+                baseline_pressure = recipe.evidence["pressure_namespace"]
+                if not baseline_peaks or baseline_pressure is None:
                     return None, {"status": "NO_COMPATIBLE_PROFILE"}
                 peak = max(baseline_peaks)
                 memory_candidates = sorted(
                     (candidate for candidate in candidates[index:]
                      if candidate[1] == "max_capacity"
                      and candidate[0]["capacity_verification"] == "LOWER_PHYSICAL_PEAK"
+                     and candidate[2]["pressure_namespace"] == baseline_pressure
                      and (candidate is baseline or max(candidate[2]["peak_vram_bytes_by_rank"]) < peak)
                      and candidate[2]["bfs_seconds"] <= 4 * fastest),
                     key=lambda candidate: (max(candidate[2]["peak_vram_bytes_by_rank"]), candidate[2]["bfs_seconds"]),
@@ -338,6 +347,16 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
                 "historical_ratio": entry["profiles"]["max_capacity"]["bfs_seconds"] / fastest,
                 "scope": "FULL_BFS_HISTORICAL_PROFILE",
             }
+            if preset == "maxmemory":
+                status["capacity_comparison"] = {
+                    "baseline_evidence_sha256": baseline[0]["evidence_sha256"],
+                    "baseline_arm": baseline[1],
+                    "baseline_memory_backend": baseline_recipe.evidence["memory_backend"],
+                    "baseline_bfs_seconds": fastest,
+                    "selected_memory_backend": recipe.evidence["memory_backend"],
+                    "selected_bfs_seconds": recipe.evidence["bfs_seconds"],
+                    "pressure_namespace": baseline_pressure,
+                }
             profile_timeout(5)
             return recipe, status
     except ProfileBudgetExpired:

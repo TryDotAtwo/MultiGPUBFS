@@ -61,6 +61,20 @@ def _record_graph(output, graph):
         path.write_text(graph.to_json(), encoding="utf-8")
 
 
+def _record_capacity_policy(policy, report):
+    registry = policy.get("profile_registry", {})
+    bound = registry.get("capacity_slowdown_status", "UNVERIFIED")
+    policy["capacity_slowdown_status"] = bound
+    comparison = registry.get("capacity_comparison")
+    if comparison and comparison["baseline_memory_backend"] != comparison["selected_memory_backend"]:
+        policy["cross_backend_slowdown_status"] = bound
+    elif policy["memory_backend"] == "permutation_bitmap":
+        policy["cross_backend_slowdown_status"] = "UNVERIFIED"
+    slowdown = report.get("autotune", {}).get("capacity_slowdown", {})
+    if slowdown:
+        policy["same_backend_pilot_slowdown_status"] = slowdown.get("status", "UNVERIFIED")
+
+
 @dataclass(frozen=True)
 class TraversalResult:
     output: Path
@@ -366,7 +380,7 @@ class BfsSession:
                 if "cluster_profile_registry" in report:
                     policy["profile_registry"] = report["cluster_profile_registry"]
                 if preset == "maxmemory":
-                    policy["capacity_slowdown_status"] = "UNVERIFIED"
+                    _record_capacity_policy(policy, report)
                 return _traversal_result(graph, output, report, policy)
             if os.environ.get("WORLD_SIZE", "1") != "1":
                 raise RuntimeError("BFS_SESSION_EXTERNAL_RANKS_REQUIRE_CLUSTER_RUNNER")
@@ -429,12 +443,7 @@ class BfsSession:
             if profile_status is not None:
                 policy["profile_registry"] = registry_run_receipt(profile_status, expected, report)
             if preset == "maxmemory":
-                slowdown = report.get("autotune", {}).get("capacity_slowdown", {})
-                if slowdown:
-                    policy["same_backend_pilot_slowdown_status"] = slowdown.get("status", "UNVERIFIED")
-                policy["capacity_slowdown_status"] = "UNVERIFIED"
-                if backend == "permutation_bitmap":
-                    policy["cross_backend_slowdown_status"] = "UNVERIFIED"
+                _record_capacity_policy(policy, report)
             return _traversal_result(graph, output, report, policy)
 
     bfs = traverse
