@@ -602,6 +602,7 @@ impl SegmentedDistributedBfs {
             OwnerSource::Local(_) => transport.config,
             OwnerSource::Remote(_) => transport.remote_owner_config(),
         };
+        let watchdog = transport.client()?.owner_watchdog();
         let mut pump_error = None;
         let mut pump = |owners: &[(usize, *mut c_void)]| -> Result<()> {
             transport
@@ -621,6 +622,7 @@ impl SegmentedDistributedBfs {
             future,
             None,
             Some(&mut pump),
+            watchdog.as_deref(),
         );
         if let Some(error) = pump_error {
             return Err(error);

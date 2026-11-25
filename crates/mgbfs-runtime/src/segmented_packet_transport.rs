@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -13,6 +13,8 @@ const HELLO_BYTES: usize = 36;
 const DEADLINE: Duration = Duration::from_secs(120);
 const PEER_OUTPUT_CAPACITY: usize = 4;
 const CAROUSEL_RECEIVE_SLOTS: usize = 3;
+#[cfg(all(feature = "cuda", target_os = "linux"))]
+const OWNER_STALL_EXIT_STATUS: libc::c_int = 75;
 pub(crate) const REMOTE_FAILURE: u32 = u32::MAX;
 #[cfg(all(feature = "cuda", target_os = "linux"))]
 pub(crate) const PACKET_CANCELLED: u32 = 101;
@@ -23,6 +25,67 @@ pub(crate) const PACKET_LINEAGE_LIMIT: u32 = 103;
 pub(crate) const PACKET_LINEAGE_DISK_FULL: u32 = 104;
 type Result<T> = std::result::Result<T, String>;
 pub(crate) type PacketJobToken = [u8; 16];
+
+/// Independent of the CUDA-calling thread, which can stall during a local
+/// owner pass even when the hub has no transfer credit to time out.
+pub(crate) struct OwnerWaveWatchdog {
+    origin: Instant,
+    deadline_ms: AtomicU64,
+}
+
+impl OwnerWaveWatchdog {
+    fn start(socket: TcpStream, rank: u32) -> Result<Arc<Self>> {
+        let watchdog = Arc::new(Self { origin: Instant::now(), deadline_ms: AtomicU64::new(0) });
+        let observer = Arc::downgrade(&watchdog);
+        #[cfg(all(feature = "cuda", target_os = "linux"))]
+        let managed_worker = std::env::var_os("MGBFS_JOB_PHASE_PATH").is_some();
+        thread::Builder::new().name("segment-owner-watchdog".into()).stack_size(128 * 1024)
+            .spawn(move || loop {
+                thread::sleep(Duration::from_millis(100));
+                let Some(watchdog) = observer.upgrade() else { break };
+                let deadline = watchdog.deadline_ms.load(Ordering::Acquire);
+                if deadline == 0 || watchdog.elapsed_ms() < deadline
+                    || watchdog.deadline_ms.compare_exchange(deadline, 0, Ordering::AcqRel, Ordering::Acquire).is_err()
+                {
+                    continue;
+                }
+                // Wake the hub even if this rank has no active wire transfer.
+                let _ = socket.shutdown(Shutdown::Both);
+                // The isolated worker still owns live GPU references. Do not
+                // block on logging, run its destructors or return it to the session.
+                #[cfg(all(feature = "cuda", target_os = "linux"))]
+                if managed_worker {
+                    unsafe { libc::_exit(OWNER_STALL_EXIT_STATUS) };
+                }
+                eprintln!("SEGMENT_PACKET_OWNER_STALL rank={rank}");
+                break;
+            }).map_err(|e| e.to_string())?;
+        Ok(watchdog)
+    }
+
+    fn elapsed_ms(&self) -> u64 {
+        self.origin.elapsed().as_millis() as u64
+    }
+
+    #[cfg_attr(not(all(feature = "cuda", target_os = "linux")), allow(dead_code))]
+    pub(crate) fn lease(&self) -> OwnerWaveLease<'_> {
+        self.lease_for(DEADLINE)
+    }
+
+    fn lease_for(&self, timeout: Duration) -> OwnerWaveLease<'_> {
+        let deadline = self.elapsed_ms() + (timeout.as_millis() as u64).max(1);
+        self.deadline_ms.store(deadline, Ordering::Release);
+        OwnerWaveLease(self)
+    }
+}
+
+pub(crate) struct OwnerWaveLease<'a>(&'a OwnerWaveWatchdog);
+
+impl Drop for OwnerWaveLease<'_> {
+    fn drop(&mut self) {
+        self.0.deadline_ms.store(0, Ordering::Release);
+    }
+}
 
 /// The same packet rendezvous can carry traversal or path candidate records.
 /// It does not choose the encoding or interpret the payload.
@@ -618,6 +681,7 @@ pub(crate) struct PacketClient {
     events: mpsc::Receiver<Frame>,
     terminal: Arc<AtomicU32>,
     hub_peak_active: Option<Arc<AtomicU32>>,
+    owner_watchdog: Option<Arc<OwnerWaveWatchdog>>,
 }
 
 impl PacketClient {
@@ -667,6 +731,11 @@ impl PacketClient {
         let socket = connect_until_ready(advertised, rank, &tag, deadline)?;
         socket.set_write_timeout(Some(DEADLINE)).map_err(|e| e.to_string())?;
         socket.set_read_timeout(None).map_err(|e| e.to_string())?;
+        let owner_watchdog = if receive_slots as usize == CAROUSEL_RECEIVE_SLOTS {
+            Some(OwnerWaveWatchdog::start(socket.try_clone().map_err(|e| e.to_string())?, rank)?)
+        } else {
+            None
+        };
         let mut incoming = socket.try_clone().map_err(|e| e.to_string())?;
         let terminal = Arc::new(AtomicU32::new(0));
         let reader_terminal = Arc::clone(&terminal);
@@ -685,7 +754,12 @@ impl PacketClient {
                 }
             }
         }).map_err(|e| e.to_string())?;
-        Ok(Self { socket, events, terminal, hub_peak_active })
+        Ok(Self { socket, events, terminal, hub_peak_active, owner_watchdog })
+    }
+
+    #[cfg(any(test, all(feature = "cuda", target_os = "linux")))]
+    pub(crate) fn owner_watchdog(&self) -> Option<Arc<OwnerWaveWatchdog>> {
+        self.owner_watchdog.clone()
     }
 
     pub fn send(&mut self, frame: Frame) -> Result<()> {
@@ -1371,6 +1445,31 @@ mod tests {
             Frame::Abort(REMOTE_FAILURE)
         );
         waiter.join().unwrap();
+    }
+
+    #[test]
+    fn stalled_owner_wave_aborts_sealed_peer_without_an_active_credit() {
+        let reserve = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = reserve.local_addr().unwrap();
+        drop(reserve);
+        let connect = move |rank| PacketClient::connect_with_receive_slots(
+            address, address, rank, 2, 2, 8, &[5; 128], &[8; 16], 3,
+        ).unwrap();
+        let starter = thread::spawn(move || connect(0));
+        let owner = connect(1);
+        let mut sealed = starter.join().unwrap();
+        let watchdog = owner.owner_watchdog().unwrap();
+
+        // Completing a pass disarms the lease; an idle peer can seal normally.
+        drop(watchdog.lease_for(Duration::from_millis(20)));
+        sealed.send(Frame::Seal(0)).unwrap();
+        assert_eq!(sealed.next(Some(Duration::from_millis(250))), None);
+        assert_eq!(sealed.hub_peak_active_credits(), Some(0));
+
+        // Keep rank 1 connected, never issue an Offer and never drop its owner lease.
+        let _stalled_owner = watchdog.lease_for(Duration::from_millis(20));
+        assert_eq!(sealed.next(Some(Duration::from_secs(3))), Some(Frame::Abort(REMOTE_FAILURE)));
+        assert_eq!(owner.next(Some(Duration::from_secs(3))), Some(Frame::Abort(REMOTE_FAILURE)));
     }
 
     #[test]

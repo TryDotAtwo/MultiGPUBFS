@@ -16,7 +16,7 @@ pub(crate) use nearest::{RootSpec, PATH_PARENT_BYTES};
 use nearest::{state_hash, NearestFns, NearestState, ParentLink, PathOwnership};
 use window::WindowState;
 use packet::{PacketCodec,PacketConfig,PacketOwnerShard,PacketRuntime,PACKET_ROUTE_STATUS_BYTES};
-use crate::segmented_packet_transport::{PacketJobToken,PACKET_CANCELLED,PACKET_DEADLINE};
+use crate::segmented_packet_transport::{OwnerWaveWatchdog,PacketJobToken,PACKET_CANCELLED,PACKET_DEADLINE};
 
 #[repr(C)] #[derive(Clone,Copy)]
 struct SegmentDescriptor{slots:*mut u64,states:*mut c_void,positions:*mut u64,slots_count:u64,capacity:u64,banks:u32,position_item_bytes:u32}
@@ -1700,11 +1700,12 @@ impl SegmentedDistributedBfs {
   self.accept_input(inputs,bank,probe)
  }
  fn accept_input(&mut self,inputs:OwnerInputs<'_>,bank:u32,probe:Option<&mut OverlapProbe>)->Result<u32>{
-  self.accept_input_with_progress(inputs,bank,probe,None)
+  self.accept_input_with_progress(inputs,bank,probe,None,None)
  }
  fn accept_input_with_progress(
   &mut self,inputs:OwnerInputs<'_>,bank:u32,mut probe:Option<&mut OverlapProbe>,
   mut pump:Option<&mut dyn FnMut(&[(usize,*mut c_void)])->Result<()>>,
+  watchdog:Option<&OwnerWaveWatchdog>,
  )->Result<u32>{
   let p=self.plan.clone();
   let (shard_count,routed_rows,packet_config)=match &inputs{
@@ -1739,6 +1740,7 @@ impl SegmentedDistributedBfs {
     Ok(OwnerProgress{shard,pass,round:0,selected,cap_probe:false,grow_runs:false,raw_begin,raw})
    }).collect::<Result<Vec<_>>>()?;
    while progress.iter().any(|v|v.selected!=0){
+    let _owner_lease=watchdog.map(OwnerWaveWatchdog::lease);
     // Prepare all descriptors and segment allocations before starting any lane.
     // cudaMemsetAsync initializes new segments on the main stream; that stream
     // must reach the barrier below before another stream observes them.
