@@ -601,12 +601,7 @@ class Cluster:
         if lineage is not None:
             options["lineage_dir"] = os.fspath(lineage)
         if use_window:
-            nested_lineage = lineage is not None and lineage.is_relative_to(output)
-            if lineage is not None and not nested_lineage:
-                lineage.mkdir(parents=True, exist_ok=True)
-            _reserve_output(output, graph)
-            if nested_lineage:
-                lineage.mkdir(parents=True, exist_ok=True)
+            _reserve_output(output, graph, lineage=lineage)
         else:
             _empty_output_dir(output)
         job = {"mode": "solve", "graph": graph.to_dict(), "options": options,

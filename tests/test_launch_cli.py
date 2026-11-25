@@ -28,4 +28,47 @@ class CliContract(unittest.TestCase):
   with tempfile.TemporaryDirectory() as d:
    p=Path(d)/'bad.json';p.write_text('{}')
    with patch('multigpubfs.cli.run_graph') as run:self.assertEqual(main([str(p),str(Path(d)/'out')]),1);run.assert_not_called()
+
+
+def test_window_lineage_preflight_keeps_failed_cli_output_available(tmp_path, monkeypatch):
+    import pytest
+    from multigpubfs import launch
+    from multigpubfs.api import BfsSession
+
+    pytest.importorskip("pyarrow")
+    graph = tmp_path / "graph.json"
+    graph.write_text(GraphDefinition.permutation([[1, 0]], [0, 1]).to_json(), encoding="utf-8")
+    output = tmp_path / "result"
+    lineage = tmp_path / "lineage"
+    lineage.touch()
+    visited = []
+
+    def fake_launch(graph, root, *, _path_window, **options):
+        assert _path_window is None
+        visited.append(root.parent.parent)
+        return dict(status="UNREACHABLE", stop_reason=None, d_min=None,
+                    target_index=None, generator_ids=[])
+
+    monkeypatch.setattr(BfsSession, "_native_nearest", lambda *args, **kwargs: ("native", {}, (0, 1), True))
+    monkeypatch.setattr(launch, "run_graph", fake_launch)
+
+    def run(out, scratch):
+        return main(["run", str(graph), str(out), "--gpus", "2", "--targets", "[[1,0]]",
+                     "--goal-mode", "window", "--lineage-dir", str(scratch)])
+
+    assert run(output, lineage) == 1
+    assert not output.exists()
+    assert visited == []
+
+    lineage.unlink()
+    assert run(output, lineage) == 0
+    assert (output / "report.json").is_file()
+
+    nested_output = tmp_path / "nested_result"
+    nested_lineage = nested_output / "csr"
+    assert run(nested_output, nested_lineage) == 0
+    assert visited == [lineage.resolve(), nested_lineage.resolve()]
+    assert (nested_output / "report.json").is_file()
+
+
 if __name__=='__main__':unittest.main()

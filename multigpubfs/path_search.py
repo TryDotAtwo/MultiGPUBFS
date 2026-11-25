@@ -316,10 +316,16 @@ def _empty_output_dir(output):
         raise FileExistsError(f"PATH_OUTPUT_NOT_EMPTY: {output}")
 
 
-def _reserve_output(output, graph):
+def _reserve_output(output, graph, *, lineage=None):
+    # An external scratch error must leave the requested result path reusable.
+    nested = lineage is not None and lineage.is_relative_to(output)
+    if lineage is not None and not nested:
+        lineage.mkdir(parents=True, exist_ok=True)
     _empty_output_dir(output)
     with (output / "graph.json").open("x", encoding="utf-8") as stream:
         stream.write(graph.to_json() + "\n")
+    if nested:
+        lineage.mkdir(parents=True, exist_ok=True)
 
 
 def _run(gpu, graph, targets, direction, goal_mode, extra, add, report, store):
@@ -640,7 +646,7 @@ def _read_native_window(root, receipt, distance, limit, target_ids, check, add, 
                           lineage_remote_read_bytes=owner_files.bytes_read)
 
 
-def _run_native_window(native, graph, targets, output, deadline, check, add, report, lineage_dir, flush):
+def _run_native_window(native, graph, targets, directory, deadline, check, add, report, flush):
     from math import ceil
     from .generic_session import nearest_receipt_generation
     from .launch import _window_shards, run_graph
@@ -649,8 +655,6 @@ def _run_native_window(native, graph, targets, output, deadline, check, add, rep
     bidirectional = report["direction"] == "bidirectional"
     target_ids = tuple(index for index, _ in targets)
     native_targets = [state for _, state in targets]
-    directory = output if lineage_dir is None else Path(lineage_dir)
-    directory.mkdir(parents=True, exist_ok=True)
 
     def launch(root, config=None):
         check()
@@ -764,6 +768,9 @@ def solve(
             raise _Stopped("TIME_LIMIT")
 
     output = Path(output).resolve()
+    window_lineage = (Path(lineage_dir).resolve()
+                      if native is not None and native_window and active_targets and lineage_dir is not None
+                      else None)
     graph_name = graph.to_dict()["name"]
     lrx = match_lrx(graph)
     report = {
@@ -805,7 +812,7 @@ def solve(
         report["r"] = lrx["r"]
     def prepare_writer():
         if not _output_reserved:
-            _reserve_output(output, graph)
+            _reserve_output(output, graph, lineage=window_lineage)
         return _ParquetPaths(output, max_paths, max_output_bytes, check, arrow, pq)
 
     def prepare_lineage():
@@ -847,8 +854,8 @@ def solve(
                     check()
                     report["status"] = "UNREACHABLE"
                 elif native_window:
-                    _run_native_window(native, graph, active_targets, output, deadline, check, add,
-                                       report, lineage_dir, writer.flush)
+                    _run_native_window(native, graph, active_targets, window_lineage or output,
+                                       deadline, check, add, report, writer.flush)
                 elif native is not None:
                     _run_native_nearest(native, graph, active_targets, output, deadline, check, add, report,
                                         bidirectional=direction == "bidirectional")
