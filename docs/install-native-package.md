@@ -1,4 +1,50 @@
-# Install MultiGPUBFS with pip
+# Install MultiGPUBFS on Linux
+
+## Build and run the current checkout
+
+The session and native route APIs require matching Python, Rust and CUDA
+sources. Build all three from this checkout. Use Linux x86_64 with a compatible
+NVIDIA driver, CUDA toolkit, CMake 3.22+, a C++17 compiler and Rust 1.75.
+Set `MGBFS_NCCL` to an NCCL installation with `include/nccl.h` and
+`lib/libnccl.so.2`. Set `MGBFS_CUTLASS` to a CUTLASS checkout at
+`ffa119a1255d78998536107466cc7097ecefa393`. Set `MGBFS_CUDA_LIBS`
+to the toolkit's CUDA runtime library directory.
+
+```bash
+MGBFS_BUILD=$(mktemp -d)
+cmake -S cuda -B "$MGBFS_BUILD/cuda" -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CUDA_ARCHITECTURES=86 -DBUILD_TESTING=OFF \
+  -DMGBFS_EXPERIMENTAL_PACK4=ON -DMGBFS_NCCL_ROOT="$MGBFS_NCCL" \
+  -DCUTLASS_ROOT="$MGBFS_CUTLASS"
+cmake --build "$MGBFS_BUILD/cuda" --parallel 2
+MGBFS_CUDA_LIB_DIR="$MGBFS_BUILD/cuda" MGBFS_CUDART_LIB_DIR="$MGBFS_CUDA_LIBS" \
+  cargo +1.75.0 build --target-dir "$MGBFS_BUILD/target" --locked --release \
+  -p mgbfs-cli --features cuda
+export MGBFS_EXECUTABLE="$MGBFS_BUILD/target/release/mgbfs"
+export LD_LIBRARY_PATH="$MGBFS_BUILD/cuda:$MGBFS_CUDA_LIBS:$MGBFS_NCCL/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+python -m pip install .
+"$MGBFS_EXECUTABLE" key-info
+```
+
+Set the architecture to `75` for T4 or `86` for RTX 3060. Use a quoted
+semicolon-separated list for a common build across different GPU models.
+Run the following smoke check on a host with two visible GPUs, or set `gpus=1`
+for one GPU.
+
+```python
+from multigpubfs import GraphDefinition, open_session
+
+graph = GraphDefinition.permutation([[1, 0, 2], [0, 2, 1]], [0, 1, 2])
+with open_session(gpus=2, tune="off") as session:
+    result = session.bfs(graph)
+    assert result.bfs_completed and result.layer_sizes == [1, 2, 2, 1]
+```
+
+Install `pyarrow>=14` to run the native route examples in the
+[session guide](bfs-session.md). The packaged Linux wheel build is defined in
+[`package-native.yml`](../.github/workflows/package-native.yml).
+
+## Install the pinned dev44 release
 
 This is an experimental release for Linux x86_64 NVIDIA GPU jobs. The same
 command works on a login host and a GPU worker; no target-host compilation is

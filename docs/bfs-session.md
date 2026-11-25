@@ -5,7 +5,7 @@ The same session accepts a `GraphDefinition`, a schema-2 JSON file or JSON objec
 ```python
 from multigpubfs import open_session
 
-with open_session(gpus=8) as bfs:
+with open_session(gpus=2) as bfs:
     full = bfs.traverse("graph.json", start=[0, 1, 2], preset="balanced")
     nearest = bfs.solve(
         "graph.json", start=[0, 1, 2], targets=[[1, 0, 2], [2, 1, 0]],
@@ -29,8 +29,8 @@ Omit `gpus` to use all visible devices, or pass `devices=[0, 3]` for explicit lo
 `nearest` returns one shortest path to the closest reachable target. `window` emits each distinct sequence of original generator IDs through length `d_min + extra_steps` whose final state is a target. Duplicate generators remain distinct labels. Walks may revisit states and continue through a target. The empty sequence is included when the start is a target. Target indexes refer to the deduplicated target list in the receipt. `INCOMPLETE` means the configured time, output, or memory limit stopped the job. Use `completed_through_length` to identify which lengths are exhaustive. An `UNREACHABLE` result certifies that no target was reached. Bidirectional search needs exact inverse edges. Directed permutation generators provide those edges through inverse permutations. Matrix actions need a supported common domain and invertible generators for the backward search. Forward search also accepts non-invertible actions.
 
 ```bash
-python -m multigpubfs run graph.json results/traversal --gpus 8 --preset balanced
-python -m multigpubfs run graph.json results/paths --gpus 8 \
+python -m multigpubfs run graph.json results/traversal --gpus 2 --preset balanced
+python -m multigpubfs run graph.json results/paths --gpus 2 \
   --targets '[[1,0,2],[2,1,0]]' --direction bidirectional --goal-mode window --extra-steps 2
 ```
 
@@ -121,10 +121,10 @@ Set `lineage_dir` for coordinator scratch storage, `max_lineage_bytes` to cap in
 ## Reproduce the checks
 
 ```bash
-python -m scripts.benchmark_segmented_presets --n 13 --devices 0,1,2,3,4,5,6,7 \
-  --repeat 2 --output /workspace/s13-presets
-python -m scripts.benchmark_segmented_presets --n 13 --devices 0,1,2,3,4,5,6,7 \
-  --packet-control-addr 127.0.0.1:29761 --output /workspace/s13-transport
+python -m scripts.benchmark_segmented_presets --n 13 --devices 0,1 \
+  --output /workspace/s13-presets
+python -m scripts.benchmark_segmented_presets --n 12 --devices 0,1 \
+  --packet-control-addr 127.0.0.1:29761 --output /workspace/s12-transport
 ```
 
 `--pressure-mib` keeps an initialized CUDA allocation on each selected GPU throughout both legs. `--segment-budget-bytes` caps only the segmented storage. Full S13 and depths 34–44 have separate verdicts. Use `--max-depth 44` for the fixed heavy window only. The benchmark writes native rank receipts and checks exact terminal state sets on exhausted runs. The benchmark exercises explicitly selected recipes. Its verdicts do not change public preset selection.
