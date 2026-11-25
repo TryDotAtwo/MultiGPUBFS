@@ -1774,7 +1774,7 @@ impl SegmentedDistributedBfs {
         let epoch = transport.epoch;
         transport.client()?.send(PacketFrame::Seal(epoch))?;
         if transport.receive.is_some() {
-            return self.finish_receive_carousel(transport, future, stats);
+            return self.finish_receive_carousel(transport, future, stats, stop);
         }
         loop {
             match transport.client()?.next_after_seal() {

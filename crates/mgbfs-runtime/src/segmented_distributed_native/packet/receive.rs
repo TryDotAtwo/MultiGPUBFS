@@ -583,7 +583,10 @@ impl SegmentedDistributedBfs {
         sealed: bool,
     ) -> PacketResult<bool> {
         let ctx = self.packet_wire_context(transport.epoch);
-        let progress = transport.progress_carousel(ctx, stats, stop, &[], sealed)?;
+        // Once sealed, ranks without work must accept Commit and use the layer
+        // boundary vote. A live Window lease still prevents the hub from committing.
+        let transport_stop = || if sealed { 0 } else { stop() };
+        let progress = transport.progress_carousel(ctx, stats, &transport_stop, &[], sealed)?;
         let wave = transport.owner_wave(self.lanes.len())?;
         if wave.is_empty() {
             return Ok(progress);
@@ -602,7 +605,7 @@ impl SegmentedDistributedBfs {
         let mut pump_error = None;
         let mut pump = |owners: &[(usize, *mut c_void)]| -> Result<()> {
             transport
-                .progress_carousel(ctx, stats, stop, owners, sealed)
+                .progress_carousel(ctx, stats, &transport_stop, owners, sealed)
                 .map(|_| ())
                 .map_err(|error| {
                     pump_error = Some(error);
@@ -630,9 +633,22 @@ impl SegmentedDistributedBfs {
         if self.window.is_some() {
             for lease in &wave {
                 let source = transport.owner_source_rank(lease, self.rank)?;
-                self.window_record_edges(lease.span, source, stop)
+                let client = transport.client()?;
+                let mut peer_abort = 0;
+                self.window_record_edges(lease.span, source, || {
+                    peer_abort = client.terminal_code();
+                    if peer_abort != 0 {
+                        return Err("SEGMENTED_WINDOW_PEER_ABORT".into());
+                    }
+                    match stop() {
+                        1 => Err("CANCELLED".into()),
+                        2 => Err("TIME_LIMIT".into()),
+                        _ => Ok(()),
+                    }
+                })
                     .map_err(|error| match error.as_str() {
                         "SEGMENTED_WINDOW_LOOKUP_RESOURCE" => PacketError::Terminal(10),
+                        "SEGMENTED_WINDOW_PEER_ABORT" => PacketError::Terminal(peer_abort),
                         "CANCELLED" => PacketError::Terminal(PACKET_CANCELLED),
                         "TIME_LIMIT" => PacketError::Terminal(PACKET_DEADLINE),
                         "LINEAGE_LIMIT" => PacketError::Terminal(PACKET_LINEAGE_LIMIT),
@@ -682,9 +698,10 @@ impl SegmentedDistributedBfs {
         transport: &mut PacketRuntime,
         future: u32,
         mut stats: PacketLayerStats,
+        stop: &impl Fn() -> u32,
     ) -> PacketResult<PacketLayerStats> {
         loop {
-            if !self.service_receive_carousel(transport, future, &mut stats, &|| 0, true)? {
+            if !self.service_receive_carousel(transport, future, &mut stats, stop, true)? {
                 // Healthy peers may still be expanding a large layer. The
                 // hub times outstanding credits and detects lost connections.
                 std::thread::sleep(Duration::from_micros(50));

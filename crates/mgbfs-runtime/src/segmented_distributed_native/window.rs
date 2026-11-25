@@ -178,7 +178,7 @@ impl SegmentedDistributedBfs {
         &mut self,
         span: PacketOwnerShard,
         source: u32,
-        stop: &impl Fn() -> u32,
+        checkpoint: impl FnMut() -> Result<()>,
     ) -> Result<()> {
         let shard = span.shard;
         let (view, directory, max_series) = self.window_catalog(shard)?;
@@ -223,11 +223,7 @@ impl SegmentedDistributedBfs {
             },
             &self.base.stream,
             &mut active.writer,
-            || match stop() {
-                1 => Err("CANCELLED".into()),
-                2 => Err("TIME_LIMIT".into()),
-                _ => Ok(()),
-            },
+            checkpoint,
         )
     }
 
