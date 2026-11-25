@@ -113,11 +113,77 @@ fn handshake_tag(identity: &[u8; 128], job_token: &PacketJobToken, receive_slots
     digest.finalize().into()
 }
 
-fn write_hello(socket: &mut TcpStream, rank: u32, tag: &[u8; 32]) -> Result<()> {
+fn write_hello(socket: &mut TcpStream, rank: u32, tag: &[u8; 32]) -> std::io::Result<()> {
     let mut hello = [0u8; HELLO_BYTES];
     hello[..4].copy_from_slice(&rank.to_le_bytes());
     hello[4..].copy_from_slice(tag);
-    socket.write_all(&hello).map_err(|e| format!("SEGMENT_PACKET_HANDSHAKE {e}"))
+    socket.write_all(&hello)
+}
+
+fn startup_disconnected(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        ErrorKind::UnexpectedEof
+            | ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::BrokenPipe
+            | ErrorKind::NotConnected
+    )
+}
+
+fn read_ready(socket: &mut TcpStream, deadline: Instant) -> Result<bool> {
+    let mut bytes = [0u8; FRAME_BYTES];
+    let mut filled = 0;
+    while filled < bytes.len() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err("SEGMENT_PACKET_STARTUP_TIMEOUT".into());
+        }
+        socket.set_read_timeout(Some(remaining)).map_err(|e| e.to_string())?;
+        match socket.read(&mut bytes[filled..]) {
+            Ok(0) if filled == 0 => return Ok(false),
+            Ok(0) => return Err("SEGMENT_PACKET_READ truncated startup frame".into()),
+            Ok(size) => filled += size,
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(error) if filled == 0 && startup_disconnected(&error) => return Ok(false),
+            Err(error) => return Err(format!("SEGMENT_PACKET_READ {error}")),
+        }
+    }
+    if Frame::decode(bytes)? != Frame::Ready {
+        return Err("SEGMENT_PACKET_STARTUP_REJECTED".into());
+    }
+    Ok(true)
+}
+
+fn connect_until_ready(
+    advertised: SocketAddr, rank: u32, tag: &[u8; 32], deadline: Instant,
+) -> Result<TcpStream> {
+    let mut last_error = "SEGMENT_PACKET_STARTUP_TIMEOUT".to_owned();
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(last_error);
+        }
+        last_error = match TcpStream::connect_timeout(&advertised, remaining.min(Duration::from_millis(250))) {
+            Err(error) => format!("SEGMENT_PACKET_CONNECT {error}"),
+            Ok(mut socket) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(last_error);
+                }
+                socket.set_nodelay(true).map_err(|e| e.to_string())?;
+                socket.set_write_timeout(Some(remaining)).map_err(|e| e.to_string())?;
+                match write_hello(&mut socket, rank, tag) {
+                    Ok(()) if read_ready(&mut socket, deadline)? => return Ok(socket),
+                    // A relay can accept TCP before the destination is listening.
+                    Ok(()) => "SEGMENT_PACKET_READ closed before READY".into(),
+                    Err(error) if startup_disconnected(&error) => format!("SEGMENT_PACKET_HANDSHAKE {error}"),
+                    Err(error) => return Err(format!("SEGMENT_PACKET_HANDSHAKE {error}")),
+                }
+            }
+        };
+        thread::sleep(deadline.saturating_duration_since(Instant::now()).min(Duration::from_millis(20)));
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -598,20 +664,8 @@ impl PacketClient {
         } else {
             None
         };
-        let mut socket = loop {
-            match TcpStream::connect_timeout(&advertised, Duration::from_millis(250)) {
-                Ok(socket) => break socket,
-                Err(_) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
-                Err(error) => return Err(format!("SEGMENT_PACKET_CONNECT {error}")),
-            }
-        };
-        socket.set_nodelay(true).map_err(|e| e.to_string())?;
+        let socket = connect_until_ready(advertised, rank, &tag, deadline)?;
         socket.set_write_timeout(Some(DEADLINE)).map_err(|e| e.to_string())?;
-        socket.set_read_timeout(Some(DEADLINE)).map_err(|e| e.to_string())?;
-        write_hello(&mut socket, rank, &tag)?;
-        if Frame::read(&mut socket)? != Frame::Ready {
-            return Err("SEGMENT_PACKET_STARTUP_REJECTED".into());
-        }
         socket.set_read_timeout(None).map_err(|e| e.to_string())?;
         let mut incoming = socket.try_clone().map_err(|e| e.to_string())?;
         let terminal = Arc::new(AtomicU32::new(0));
@@ -738,17 +792,32 @@ fn run_hub(
                 continue;
             }
             let rank = u32::from_le_bytes(hello.bytes[..4].try_into().unwrap()) as usize;
-            if rank >= peers.len() || peers[rank].is_some() {
+            if rank >= peers.len() {
                 return Err("SEGMENT_PACKET_INVALID_HELLO".into());
             }
-            hello.socket.set_nonblocking(false).map_err(|e| e.to_string())?;
+            let previous = &mut peers[rank];
+            if let Some(peer) = previous {
+                // A retry can replace a disconnected HELLO before Ready, never a live rank.
+                if !startup_peer_disconnected(peer) {
+                    return Err("SEGMENT_PACKET_INVALID_HELLO".into());
+                }
+            } else {
+                count += 1;
+            }
             hello.socket.set_write_timeout(Some(DEADLINE)).map_err(|e| e.to_string())?;
             hello.socket.set_nodelay(true).map_err(|e| e.to_string())?;
-            peers[rank] = Some(hello.socket);
-            count += 1;
+            *previous = Some(hello.socket);
             if count == world { break; }
         }
-        if count == world { break; }
+        if count == world {
+            for peer in &mut peers {
+                if peer.as_ref().is_some_and(startup_peer_disconnected) {
+                    *peer = None;
+                    count -= 1;
+                }
+            }
+            if count == world { break; }
+        }
 
         let mut accepted = false;
         for _ in 0..world {
@@ -777,7 +846,17 @@ fn run_hub(
     }
     drop(pending);
     let peers = peers.into_iter().map(Option::unwrap).collect::<Vec<_>>();
+    for peer in &peers {
+        peer.set_nonblocking(false).map_err(|e| e.to_string())?;
+    }
     hub_loop(&peers, scheduler)
+}
+
+fn startup_peer_disconnected(peer: &TcpStream) -> bool {
+    match peer.peek(&mut [0u8; 1]) {
+        Ok(size) => size == 0,
+        Err(error) => startup_disconnected(&error),
+    }
 }
 
 enum HubInput {
@@ -1357,6 +1436,58 @@ mod tests {
         }
         hub.join().unwrap().unwrap();
         drop(stalled);
+    }
+
+    #[test]
+    fn tcp_client_retries_when_a_forwarder_accepts_before_the_hub_binds() {
+        let relay = TcpListener::bind("127.0.0.1:0").unwrap();
+        let advertised = relay.local_addr().unwrap();
+        let tag = handshake_tag(&[9; 128], &[4; 16], 1);
+        let timeout = Duration::from_secs(3);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let (closed_tx, closed_rx) = mpsc::channel();
+        let (origin_tx, origin_rx) = mpsc::channel();
+
+        let forwarder = thread::spawn(move || {
+            let (mut early, _) = relay.accept().unwrap();
+            early.set_read_timeout(Some(timeout)).unwrap();
+            let mut hello = [0u8; HELLO_BYTES];
+            early.read_exact(&mut hello).unwrap();
+            drop(early);
+            closed_tx.send(()).unwrap();
+
+            let origin = origin_rx.recv_timeout(timeout).unwrap();
+            let (mut client, _) = relay.accept().unwrap();
+            client.set_read_timeout(Some(timeout)).unwrap();
+            client.read_exact(&mut hello).unwrap();
+            let mut backend = TcpStream::connect(origin).unwrap();
+            backend.set_read_timeout(Some(timeout)).unwrap();
+            backend.write_all(&hello).unwrap();
+            let ready = Frame::read(&mut backend).unwrap();
+            assert_eq!(ready, Frame::Ready);
+            ready.write(&mut client).unwrap();
+            let close = Frame::read(&mut client).unwrap();
+            assert_eq!(close, Frame::Close);
+            close.write(&mut backend).unwrap();
+        });
+        let remote = thread::spawn(move || {
+            let mut socket = connect_until_ready(advertised, 1, &tag, deadline).unwrap();
+            Frame::Close.write(&mut socket).unwrap();
+        });
+
+        // The first TCP dial worked and its HELLO arrived at the forwarder before any hub existed.
+        closed_rx.recv_timeout(timeout).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let hub = thread::spawn(move || run_hub(listener, Scheduler::new(2, 1, 8), tag, deadline));
+        origin_tx.send(origin).unwrap();
+
+        let mut root = connect_until_ready(origin, 0, &tag, deadline).unwrap();
+        Frame::Close.write(&mut root).unwrap();
+        remote.join().unwrap();
+        forwarder.join().unwrap();
+        hub.join().unwrap().unwrap();
     }
 
     #[test]
