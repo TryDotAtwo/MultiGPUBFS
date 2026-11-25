@@ -7,6 +7,10 @@ class NativeTargets(unittest.TestCase):
  def test_exact_target_has_only_its_native_image(self):
   for target in (75,80,86,89,90,100,103,120):
    arch,ptx,cmake=self.targets('shared-sm120',str(target));self.assertEqual(arch,[target]);self.assertEqual(ptx,[]);self.assertEqual(cmake,str(target)+'-real')
+ def test_fresh_bundle_can_explicitly_select_one_native_validation_target(self):
+  self.assertEqual(self.targets(None, '75'), ([75], [], '75-real'))
+  with self.assertRaises(ValueError):
+   self.targets(None, '99')
  def test_universal_keeps_all_native_and_ordinary_ptx(self):
   arch,ptx,cmake=self.targets('shared-sm120',None);self.assertEqual(arch,[75,80,86,89,90,100,103,120]);self.assertEqual(ptx,[80]);self.assertIn('80-virtual',cmake)
  def test_unpublished_or_legacy_target_override_rejected(self):

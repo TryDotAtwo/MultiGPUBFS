@@ -42,7 +42,8 @@ architectures,runtime=choices.get(variant,(universal,'Shared'))
 sys.path.insert(0,str(root))
 from scripts.fatbinary_inventory import verify_bundled_inventory, verify_inventory
 from scripts.native_build_targets import targets
-native_architectures,ptx_architectures,cmake_architectures=targets(variant,os.environ.get('MGBFS_TARGET_ARCH'))
+target_arch = os.environ.get('MGBFS_TARGET_ARCH')
+native_architectures,ptx_architectures,cmake_architectures=targets(variant,target_arch)
 architectures=';'.join(map(str,native_architectures))
 flags=['-DCMAKE_CUDA_FLAGS=--threads=2']+([] if runtime is None else ['-DCMAKE_CUDA_RUNTIME_LIBRARY='+runtime])
 if variant is None:
@@ -79,7 +80,7 @@ manifest = {
     'architectures': native_architectures,
     'ptx_architectures': ptx_architectures,
     'cuda_runtime_linkage': runtime,
-    'production_build': 'shared-sm120',
+    'production_build': 'shared-sm120' if target_arch is None else f'validation-sm{target_arch}',
     'platform': 'linux_x86_64',
     'source_commit': source,
     'fatbinary_inventory': inventory,
