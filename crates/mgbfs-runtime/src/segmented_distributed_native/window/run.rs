@@ -1,5 +1,9 @@
 use super::super::nearest::Targets;
-use super::{join::JoinTile, write_pair, SegmentedDistributedBfs};
+use super::{
+    join::JoinTile,
+    lineage::{start_writer, FinishedSpool},
+    write_pair, SegmentedDistributedBfs,
+};
 use crate::generic_distributed_native::DistributedAdvance;
 use crate::path_csr::{io_error, TransitionSpool};
 use crate::segmented_packet_transport::{
@@ -137,7 +141,7 @@ impl Lineage {
 }
 
 enum DiskLayer {
-    Ready(TransitionSpool),
+    Ready(FinishedSpool),
     Empty,
     Stopped(&'static str),
 }
@@ -199,6 +203,7 @@ impl SegmentedDistributedBfs {
             "lineage_csr_bytes": lineage.csr_bytes,
             "lineage_peak_bytes": lineage.peak,
             "lineage_peak_scope": "admitted disk bytes including interrupted transition spools",
+            "lineage_io": self.window.as_ref().map(|window| window.tile.stats()),
             "native_process_peak_rss_bytes": crate::generic_path_native::process_peak_rss_bytes(),
         }))
     }
@@ -350,6 +355,8 @@ impl SegmentedDistributedBfs {
             "lineage_csr_bytes": lineage.csr_bytes,
             "lineage_peak_bytes": lineage.peak,
             "lineage_peak_scope": "admitted disk bytes including interrupted transition spools",
+            "lineage_io": [forward.window.as_ref().map(|window| window.tile.stats()),
+                           reverse.window.as_ref().map(|window| window.tile.stats())],
             "native_process_peak_rss_bytes": crate::generic_path_native::process_peak_rss_bytes(),
         }))
     }
@@ -401,18 +408,18 @@ impl SegmentedDistributedBfs {
         lineage: &mut Lineage,
     ) -> Result<DiskLayer> {
         let next_depth = self.depth + 1;
-        let spool = checkpoint(stop).and_then(|()| {
-            TransitionSpool::new(
+        let writer = checkpoint(stop).and_then(|()| {
+            start_writer(TransitionSpool::new(
                 output.join(format!("{next_depth}.runs")),
                 lineage.budget - lineage.bytes,
-            )
+            )?)
         });
-        if let Some(reason) = self.agree_window_artifacts(&spool)? {
+        if let Some(reason) = self.agree_window_artifacts(&writer)? {
             return Ok(DiskLayer::Stopped(reason));
         }
         crate::native_fault::layer(next_length, next_length - 1);
-        let (advanced, boundary_stop, spool) = self.advance_window(spool?, stop)?;
-        lineage.observe(spool.peak_reserved_bytes())?;
+        let (advanced, boundary_stop, spool) = self.advance_window(writer?, stop)?;
+        lineage.observe(spool.spool.peak_reserved_bytes())?;
         match advanced {
             // A drained, empty frontier proves that every later cut is empty.
             DistributedAdvance::Complete => Ok(DiskLayer::Empty),
@@ -432,7 +439,7 @@ impl SegmentedDistributedBfs {
         &mut self,
         targets: &Targets<'_>,
         output: &Path,
-        spool: Option<TransitionSpool>,
+        spool: Option<FinishedSpool>,
         checkpoint: &impl Fn() -> Result<()>,
         lineage: &mut Lineage,
     ) -> Result<Option<&'static str>> {
@@ -470,11 +477,15 @@ impl SegmentedDistributedBfs {
     fn finish_window_csr(
         &self,
         output: &Path,
-        mut spool: TransitionSpool,
+        finished: FinishedSpool,
         pending: &mut PendingFiles,
         checkpoint: &impl Fn() -> Result<()>,
         lineage: &mut Lineage,
     ) -> Result<u64> {
+        let FinishedSpool { mut spool, failure } = finished;
+        if let Some(error) = failure {
+            return Err(error);
+        }
         let by_shard = self.window_rows_by_shard()?;
         if by_shard
             .iter()

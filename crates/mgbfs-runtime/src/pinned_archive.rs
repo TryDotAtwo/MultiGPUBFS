@@ -36,6 +36,26 @@ pub(crate) struct Slot {
 // Worker waits for the recorded D2H event before reading, returns after write.
 unsafe impl Send for Slot {}
 impl Slot {
+    pub(crate) fn new_ring(bytes: usize, slots: usize) -> Result<Vec<Self>> {
+        let mut ring = Vec::with_capacity(slots);
+        for _ in 0..slots {
+            let Some((ptr, ready, allocation)) = crate::session_cache::pinned_take(bytes) else {
+                break;
+            };
+            ring.push(Self { ptr, bytes, ready, allocation });
+        }
+        let missing = slots - ring.len();
+        if missing == 0 {
+            return Ok(ring);
+        }
+        let total = bytes.checked_mul(missing).ok_or("ARCHIVE_PIN_OVERFLOW")?;
+        let block = HostBlock::new(total)?;
+        for index in 0..missing {
+            ring.push(Self::new(bytes, block.clone(), index * bytes)?);
+        }
+        Ok(ring)
+    }
+
     fn new(bytes: usize, allocation: std::sync::Arc<HostBlock>, offset: usize) -> Result<Self> {
         let ptr=unsafe {allocation.ptr.cast::<u8>().add(offset).cast::<c_void>()};
         let mut ready = std::ptr::null_mut();

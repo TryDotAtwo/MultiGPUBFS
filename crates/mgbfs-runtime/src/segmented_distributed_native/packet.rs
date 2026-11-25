@@ -405,13 +405,13 @@ struct PacketSourceScratch {
     runs: Vec<ShardRun>,
 }
 
-struct PacketEvent {
+pub(super) struct PacketEvent {
     ptr: *mut c_void,
     device: i32,
 }
 
 impl PacketEvent {
-    fn new(device: i32) -> Result<Self> {
+    pub(super) fn new(device: i32) -> Result<Self> {
         let mut ptr = ptr::null_mut();
         const DISABLE_TIMING: u32 = 2;
         crate::generic_native::checked!(cudaEventCreateWithFlags, unsafe {
@@ -420,7 +420,7 @@ impl PacketEvent {
         Ok(Self { ptr, device })
     }
 
-    fn record(&self, stream: &Stream) -> Result<()> {
+    pub(super) fn record(&self, stream: &Stream) -> Result<()> {
         crate::generic_native::checked!(cudaEventRecord, unsafe {
             cudaEventRecord(self.ptr, stream.ptr)
         })
@@ -434,9 +434,15 @@ impl PacketEvent {
         }
     }
 
-    fn wait_on(&self, stream: &Stream) -> Result<()> {
+    pub(super) fn wait_on(&self, stream: &Stream) -> Result<()> {
         crate::generic_native::checked!(cudaStreamWaitEvent, unsafe {
             cudaStreamWaitEvent(stream.ptr, self.ptr, 0)
+        })
+    }
+
+    pub(super) fn synchronize(&self) -> Result<()> {
+        crate::generic_native::checked!(cudaEventSynchronize, unsafe {
+            mgbfs_cuda::native_owner::cudaEventSynchronize(self.ptr)
         })
     }
 }

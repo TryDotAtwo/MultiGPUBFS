@@ -4,14 +4,14 @@ mod join;
 mod lineage;
 mod run;
 
-use self::lineage::{LineageCatalog, LineageSource, LineageTile};
+use self::lineage::{FinishedSpool, LineageCatalog, LineageSource, LineageTile, Writer};
 use super::nearest::{target_lookup_kernel, FindTargets, TargetLookup, Targets};
 use super::{
     ArenaPurpose, BatchHashShard, PacketOwnerShard, Plan, Range, RootSpec, Segment,
     SegmentedDistributedBfs,
 };
 use crate::generic_distributed_native::DistributedAdvance;
-use crate::path_csr::{io_error, Transition, TransitionSpool};
+use crate::path_csr::io_error;
 use crate::segmented_host_ready::HostAgreement;
 use crate::segmented_packet_transport::{PacketJobToken, PACKET_CANCELLED, PACKET_DEADLINE};
 use mgbfs_core::{graph_definition::GraphDefinitionV2, Result};
@@ -20,13 +20,13 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
     path::Path,
+    sync::Arc,
 };
 
 pub(super) struct WindowState {
     tile: LineageTile,
     expansion: Option<Expansion>,
-    segment_bases: Vec<Vec<u64>>,
-    edges: Vec<Transition>,
+    segment_bases: Vec<Arc<Vec<u64>>>,
     root_targets: Vec<u32>,
     target_lookup: Option<TargetLookup>,
     find_targets: FindTargets,
@@ -38,7 +38,7 @@ struct Expansion {
     source: Vec<Vec<Segment>>,
     source_index: Vec<Option<BatchHashShard>>,
     source_totals: [u64; 3],
-    spool: TransitionSpool,
+    writer: Writer,
 }
 
 impl WindowState {
@@ -50,8 +50,7 @@ impl WindowState {
         Ok(Self {
             tile: LineageTile::new(device)?,
             expansion: None,
-            segment_bases: (0..shards).map(|_| Vec::new()).collect(),
-            edges: Vec::new(),
+            segment_bases: (0..shards).map(|_| Arc::new(Vec::new())).collect(),
             root_targets: Vec::new(),
             target_lookup: Some(TargetLookup::new(elements, device)?),
             find_targets: target_lookup_kernel().ok_or("SEGMENTED_PATH_TARGET_ABI_UNAVAILABLE")?,
@@ -112,6 +111,7 @@ impl SegmentedDistributedBfs {
         cuts: Option<&[u64]>,
         ready: &HostAgreement,
     ) -> Result<(Self, Option<Self>)> {
+        lineage::prepare_pinned_pool(if inverse.is_some() { 2 } else { 1 });
         if let Some((inverse, targets)) = inverse {
             let (forward, reverse) = Self::new_path_pair(
                 graph,
@@ -188,16 +188,21 @@ impl SegmentedDistributedBfs {
         let bases = &mut window.segment_bases[shard];
         // Row counts of an extent freeze when its successor becomes active.
         // Keep the base stable across owner waves and spill/replay.
-        while bases.len() < segments.len() {
-            let base = match bases.last() {
-                None => 0,
-                Some(&previous) => previous
-                    .checked_add(segments[bases.len() - 1].banks[0])
-                    .ok_or("SEGMENTED_WINDOW_ROW_OVERFLOW")?,
-            };
-            bases.push(base);
+        if bases.len() < segments.len() {
+            let bases = Arc::make_mut(bases);
+            while bases.len() < segments.len() {
+                if segments[bases.len()].desc.banks != 1 {
+                    return Err("SEGMENTED_WINDOW_EDGE_ROW".into());
+                }
+                let base = match bases.last() {
+                    None => 0,
+                    Some(&previous) => previous
+                        .checked_add(segments[bases.len() - 1].banks[0])
+                        .ok_or("SEGMENTED_WINDOW_ROW_OVERFLOW")?,
+                };
+                bases.push(base);
+            }
         }
-        let edges = &mut window.edges;
         window.tile.resolve(
             LineageSource {
                 plan: &self.plan,
@@ -211,26 +216,13 @@ impl SegmentedDistributedBfs {
             },
             LineageCatalog {
                 prepared: &view,
-                segments,
                 directory: &directory,
                 max_series,
+                bases: Arc::clone(bases),
+                last_rows: segments.last().map_or(0, |segment| segment.banks[0]),
             },
-            self.base.stream.ptr,
-            |records| {
-                edges.clear();
-                for edge in records {
-                    let base = bases[edge.segment as usize];
-                    edges.push(Transition {
-                        child: base
-                            .checked_add(u64::from(edge.row))
-                            .ok_or("SEGMENTED_WINDOW_ROW_OVERFLOW")?,
-                        parent_rank: edge.source,
-                        parent: edge.parent,
-                        generator: edge.generator,
-                    });
-                }
-                active.spool.add_shard(shard as u32, edges)
-            },
+            &self.base.stream,
+            &mut active.writer,
             || match stop() {
                 1 => Err("CANCELLED".into()),
                 2 => Err("TIME_LIMIT".into()),
@@ -378,18 +370,18 @@ impl SegmentedDistributedBfs {
         result
     }
 
-    pub(super) fn advance_window(
+    fn advance_window(
         &mut self,
-        spool: TransitionSpool,
+        writer: Writer,
         stop: &impl Fn() -> u32,
-    ) -> Result<(DistributedAdvance, u32, TransitionSpool)> {
+    ) -> Result<(DistributedAdvance, u32, FinishedSpool)> {
         self.connect_packet_control()?;
         let window = self.window.as_mut().ok_or("SEGMENTED_WINDOW_LAYOUT")?;
         if window.expansion.is_some() {
             return Err("SEGMENTED_WINDOW_LAYER".into());
         }
         for bases in &mut window.segment_bases {
-            bases.clear();
+            Arc::make_mut(bases).clear();
         }
         let shards = self.segments.len();
         let old_source = std::mem::replace(
@@ -402,7 +394,7 @@ impl SegmentedDistributedBfs {
             source: old_source,
             source_index: old_index,
             source_totals: std::mem::take(&mut self.bank_totals),
-            spool,
+            writer,
         });
         let mut boundary = 0;
         let result = self.expand_window(stop, &mut boundary);
@@ -410,8 +402,10 @@ impl SegmentedDistributedBfs {
             source,
             source_index,
             source_totals,
-            spool,
+            writer,
         } = self.window.as_mut().unwrap().expansion.take().unwrap();
+        let complete = matches!(result, Ok(DistributedAdvance::Layer { .. })) && boundary == 0;
+        let finished = self.window.as_mut().unwrap().tile.finish(writer, complete);
         if matches!(result, Ok(DistributedAdvance::Layer { .. })) {
             self.release_window_arena(source, source_index)?;
         } else {
@@ -420,7 +414,7 @@ impl SegmentedDistributedBfs {
             self.bank_totals = source_totals;
             self.release_window_arena(partial, partial_index)?;
         }
-        Ok((result?, boundary, spool))
+        Ok((result?, boundary, finished?))
     }
 
     fn expand_window(

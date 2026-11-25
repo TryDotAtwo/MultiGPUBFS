@@ -6,6 +6,10 @@ use std::path::{Path, PathBuf};
 
 use mgbfs_core::Result;
 
+mod writer;
+#[cfg(all(feature = "cuda", target_os = "linux"))]
+pub(crate) use writer::TransitionWriter;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Transition {
     pub child: u64,

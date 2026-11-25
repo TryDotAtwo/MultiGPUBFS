@@ -595,6 +595,8 @@ def _read_native_window(root, receipt, distance, limit, target_ids, check, add, 
     if receipt.get("native_storage") == "SEGMENTED_LAYER_BATCH_HASH":
         layer_key = "side_layer_rows" if report["direction"] == "bidirectional" else "layer_rows"
         report["native_window_layer_rows_by_rank"] = [item[layer_key] for item in receipt["ranks"]]
+    if any("lineage_io" in item for item in receipt["ranks"]):
+        report["native_window_lineage_io_by_rank"] = [item.get("lineage_io") for item in receipt["ranks"]]
     available = receipt["graph_completed_through_depth"]
     report["window_graph_completed_through_length"] = receipt.get("native_graph_completed_through_depth", available)
     report["window_lineage_available_through_length"] = available
