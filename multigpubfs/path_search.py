@@ -20,6 +20,9 @@ from .path_network import DistributedLayers, connect
 from .specialized import match_lrx
 
 
+_NATIVE_WINDOW_MAX_LENGTH = 0xffff_ffff
+
+
 @dataclass(frozen=True)
 class PathSearchResult:
     graph: GraphDefinition
@@ -672,12 +675,14 @@ def _run_native_window(native, graph, targets, directory, deadline, check, add, 
         with nearest_receipt_generation(distributed=True):
             _record_native_nearest(nearest, graph, targets, check, None, report)
         distance = report["d_min"]
+        if distance is not None:
+            report["max_length"] = distance + report["k"]
         if report["status"] != "COMPLETE":
             return
-        limit = distance + report["k"]
-        if limit > 0xffff_ffff:
-            raise ValueError("NATIVE_WINDOW_DEPTH_RANGE")
-        report["max_length"] = limit
+        limit = report["max_length"]
+        if limit > _NATIVE_WINDOW_MAX_LENGTH:
+            report.update(status="INCOMPLETE", stop_reason="LENGTH_RANGE")
+            return
         budget = report["max_lineage_bytes"]
         if budget is None:
             budget = (1 << 64) - 1

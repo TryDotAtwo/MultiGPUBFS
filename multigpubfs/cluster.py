@@ -397,7 +397,8 @@ class Cluster:
 
         from .launch import _require_memory_backend, _require_segmented_path_capabilities, _window_shards, run_graph
         from .path_search import (
-            _active_path_targets, _deadline, _empty_native_path_receipt, _graph_and_targets, solve,
+            _NATIVE_WINDOW_MAX_LENGTH, _active_path_targets, _deadline, _empty_native_path_receipt,
+            _graph_and_targets, solve,
         )
         from .path_window_files import WindowOwnerFiles, serve_window_files
 
@@ -449,12 +450,12 @@ class Cluster:
                     remaining = None if deadline is None else max(0.0, deadline - perf_counter())
                     self.store.put(prefix + "remaining", remaining)
                 remaining = self.store.get(prefix + "remaining")
+                limit = nearest["d_min"] + options["extra_steps"]
                 if remaining == 0:
                     stop_reason = "TIME_LIMIT"
+                elif not 0 <= limit <= _NATIVE_WINDOW_MAX_LENGTH:
+                    stop_reason = "LENGTH_RANGE"
                 else:
-                    limit = nearest["d_min"] + options["extra_steps"]
-                    if not 0 <= limit <= 0xffff_ffff:
-                        raise ValueError("NATIVE_WINDOW_DEPTH_RANGE")
                     budget = options.get("max_lineage_bytes")
                     rank_budget = ((1 << 64) - 1 if budget is None else budget) // world
                     config = {"max_length": limit, "disk_budget": rank_budget}

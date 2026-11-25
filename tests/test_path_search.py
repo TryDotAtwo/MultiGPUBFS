@@ -867,6 +867,28 @@ def test_native_window_cannot_report_complete_for_a_short_prefix(tmp_path, monke
     assert not (tmp_path / "report.json").exists()
 
 
+def test_native_window_length_overflow_preserves_nearest(tmp_path, monkeypatch):
+    from multigpubfs import launch
+
+    graph = GraphDefinition.permutation([[1, 0]], [0, 1])
+
+    def fake_launch(graph, output, *, _path_window, **options):
+        assert _path_window is None
+        return dict(status="COMPLETE", stop_reason=None, d_min=1,
+                    target_index=0, generator_ids=[0])
+
+    monkeypatch.setattr(launch, "run_graph", fake_launch)
+    result = path_search.solve(graph, targets=[[1, 0]], output=tmp_path, goal_mode="window",
+                               extra_steps=0xffff_ffff, native=("mgbfs", {}, (0,), True))
+    assert result.status == "INCOMPLETE"
+    assert result.report["stop_reason"] == "LENGTH_RANGE"
+    assert result.report["d_min"] == 1 and result.report["max_length"] == 1 << 32
+    assert result.report["nearest_witness"] == {"target_index": 0, "generator_ids": [0]}
+    assert result.report["completed_through_length"] is None
+    assert result.report["path_count"] == 0
+    assert list(result.iter_paths()) == []
+
+
 def test_native_bidirectional_window_streams_unique_cuts_with_cycles(tmp_path, monkeypatch):
     from struct import pack
     from multigpubfs import launch

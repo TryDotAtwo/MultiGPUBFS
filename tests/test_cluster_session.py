@@ -485,6 +485,14 @@ def test_owner_csr_output(tmp_path, monkeypatch, direction):
         with ThreadPoolExecutor(1) as pool:
             worker = pool.submit(peers[1].serve)
             try:
+                overflow = peers[0].solve(session, graph, tmp_path / "overflow",
+                                          dict(options, extra_steps=0xffff_ffff))
+                assert overflow.status == "INCOMPLETE" and overflow.report["stop_reason"] == "LENGTH_RANGE"
+                assert overflow.report["d_min"] == 1 and overflow.report["max_length"] == 1 << 32
+                assert overflow.report["nearest_witness"] == {"target_index": 0, "generator_ids": [0]}
+                assert overflow.report["completed_through_length"] is None
+                assert list(overflow.iter_paths()) == []
+
                 output = tmp_path / "full"
                 full = peers[0].solve(session, graph, output, dict(options, lineage_dir=output))
                 assert full.report["completed_through_length"] == 3
@@ -504,7 +512,7 @@ def test_owner_csr_output(tmp_path, monkeypatch, direction):
                 if peers[0].failure is None:
                     peers[0].stop()
             worker.result(timeout=5)
-        assert peers[0].sequence == peers[1].sequence == 3
+        assert peers[0].sequence == peers[1].sequence == 4
     finally:
         peers[0].store.close()
 
