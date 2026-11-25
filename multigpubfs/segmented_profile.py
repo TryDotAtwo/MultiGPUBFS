@@ -1,5 +1,8 @@
 """Choose a source batch from exact external segmented BFS prefixes."""
 
+import json
+
+_SESSION_PROFILES = 16
 _MIN_DEPTH = 4
 _MIN_POST_WARMUP_STATES = 32768
 _MIN_IMPROVEMENT = 0.05
@@ -11,6 +14,44 @@ _PLAN_SIZING_FIELDS = {
 
 def _fixed_plan(plan):
     return {key: value for key, value in plan.items() if key not in _PLAN_SIZING_FIELDS}
+
+
+def batch_profile_geometry(admission):
+    return [admission["owner_cuts"], [
+        dict(_fixed_plan(plan), batch=plan["batch"], queue_capacity=plan["queue_capacity"])
+        for plan in admission["rank_plans"]
+    ]]
+
+
+def batch_profile_key(identity, env, inventory, baseline):
+    ranks = [[row.get(field) for field in (
+        "device", "total_bytes", "compute_major", "compute_minor", "sm_count", "l2_bytes",
+        "cold_additional_reserve_bytes",
+    )] for row in inventory]
+    settings = {key: value for key, value in env.items()
+                if key.startswith(("NCCL_", "CUDA_", "MGBFS_GENERIC_"))
+                or key == "MGBFS_PROFILE_PRESSURE_NAMESPACE"}
+    return json.dumps([{key: value for key, value in identity.items() if key != "seconds"},
+                       settings, ranks, batch_profile_geometry(baseline)], sort_keys=True)
+
+
+def remember_batch_profile(cache, key, admission, profile, result):
+    cache.pop(key, None)
+    if (profile["status"] not in ("MEASURED_EQUAL_PREFIX_EXTERNAL_BATCH_PROFILE",
+                                  "REUSED_MEASURED_EXTERNAL_BATCH_PROFILE")
+            or result["status"] != "COMPLETE"):
+        return
+    prefix = profile["common_layer_sizes"]
+    if result["layer_sizes"][:len(prefix)] != prefix:
+        return
+    trial = next(item for item in profile["pilots"] if item["requested_batch"] == profile["selected_batch"])
+    if (trial["comparison"] != "MATCHED_PREFIX"
+            or trial["admitted_batches_by_rank"] != [row["admitted_batch"] for row in result["segment_memory_by_rank"]]
+            or trial["admitted_owner_cuts"] != result["owner_cuts"]):
+        return
+    cache[key] = (batch_profile_geometry(admission), profile)
+    if len(cache) > _SESSION_PROFILES:
+        del cache[next(iter(cache))]
 
 
 def _pilot_evidence(admission, reports, requested_batch):

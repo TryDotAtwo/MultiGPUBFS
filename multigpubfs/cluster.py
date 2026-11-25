@@ -93,6 +93,7 @@ class Cluster:
         self.sequence = 0
         self.worker = None
         self.worker_settings = None
+        self._segmented_batch_profiles = {}
         self.path_ran = False
         self.failure = None
 

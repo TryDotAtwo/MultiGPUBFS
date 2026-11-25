@@ -308,7 +308,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
      for i in range(world):store.get(label+f'/consumed/{i}')
      store.release_prefix(label+'/')
     return result['report']
-   segmented_profile=None
+   segmented_profile=None;profile_cache=None;profile_key=None
    if segmented and shards is None:
     inventory=inventories('segmented-geometry')
     baseline=admit('segmented-baseline',inventory,1,capacity)
@@ -330,6 +330,11 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
      from functools import partial
      from .external_pilots import launch_trial, run_batch_trials
      from .process_control import ProfileBudgetExpired, profile_budget, profile_timeout
+     from .segmented_profile import batch_profile_geometry, batch_profile_key, remember_batch_profile
+
+     if rank==0 and cluster is not None:
+      profile_cache=cluster._segmented_batch_profiles
+      profile_key=batch_profile_key(identity,native_env,inventory,admitted_plan)
 
      cold_inventory=None
      if rank==0 and all(type(item.get('physical_free_bytes')) is int and item['physical_free_bytes']>0
@@ -361,10 +366,19 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
      def admit_resident(requested_batch,end):
       return readmit(inventory,requested_batch,end,'resident-pilot')
 
+     def reuse_batch(end):
+      cached=profile_cache.get(profile_key) if profile_cache is not None else None
+      if cached is None:return None
+      geometry,evidence=cached
+      requested_batch=evidence['selected_batch']
+      candidate=admitted_plan if requested_batch==admitted_plan['plan']['batch'] else admit_resident(requested_batch,end-0.125)
+      if candidate is None or batch_profile_geometry(candidate)!=geometry:return None
+      return candidate,dict(evidence,status='REUSED_MEASURED_EXTERNAL_BATCH_PROFILE')
+
      run_trial=partial(launch_trial,store,temporary=temporary,native=native,definition=definition,
                        env=native_env,rank=rank,world=world,device=device)
      admitted_plan,segmented_profile=run_batch_trials(store,rank,world,admitted_plan,profile_deadline,
-                                                     admit_cold,admit_resident,run_trial)
+                                                     admit_cold,admit_resident,run_trial,reuse=reuse_batch)
    if not segmented and shards is None and autotune and (max_seconds is None or max_seconds>=10):
     inventory=inventories('profile-admission')
     from .hardware_profiles import startup_policy
@@ -399,6 +413,8 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
    remaining=remaining_work(max_seconds,time.monotonic()-started);result=phase('production',shards,capacity,profile['batch_fraction'] if profile else 1.0,remaining,transport=profile['transport'] if profile else native_env.get('MGBFS_GENERIC_TRANSPORT'),order=profile['candidate_order'] if profile else native_env.get('MGBFS_GENERIC_SORT'),history=('sorted' if profile['history_algorithm']=='SORTED_RUNS' else 'hash') if profile else native_env.get('MGBFS_GENERIC_HISTORY'),lanes=profile['owner_lanes'] if profile and profile['history_algorithm']=='SORTED_RUNS' else None,generator=profile.get('reserve_generator_backend',profile.get('generator_backend','cuda')) if profile else native_env.get('MGBFS_GENERIC_GENERATOR'),prepared=admitted_plan)
    if profile:profile['online_size_tuning']=result.get('size_profile_count',0)>0;result['autotune']=profile;(output/'report.json').write_text(json.dumps(result,indent=2))
    if segmented_profile is not None:
+    if profile_cache is not None:
+     remember_batch_profile(profile_cache,profile_key,admitted_plan,segmented_profile,result)
     result['autotune']=segmented_profile
     (output/'report.json').write_text(json.dumps(result,indent=2))
    store.put(f'finished/{rank}',True)

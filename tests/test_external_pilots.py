@@ -12,7 +12,7 @@ import pytest
 def test_cluster_reaps_pilots_and_admits_the_selected_batch(tmp_path, stall):
     native = tmp_path / "native_fixture.py"
     native.write_text(r'''
-import hashlib, json, os, sys, time
+import hashlib, json, math, os, sys, time
 from pathlib import Path
 
 _, _, graph, config_path, rank, bootstrap, output, seconds = sys.argv
@@ -21,7 +21,8 @@ rank = int(rank)
 bootstrap, output = Path(bootstrap), Path(output)
 trial = "profile_max_layers" in config
 batch = config["plan"]["batch"]
-assert os.environ["MGBFS_GENERIC_VRAM_RESERVE_BYTES"] == ("2097152" if trial else "1048576")
+assert int(os.environ["MGBFS_GENERIC_VRAM_RESERVE_BYTES"]) == config["additional_reserve_bytes"]
+assert config["additional_reserve_bytes"] == 1<<21 if trial else config["additional_reserve_bytes"] < 1<<21
 assert "online_size_tuning" not in config
 root = Path(str(bootstrap) + ".segmented-host")
 root.mkdir()
@@ -45,9 +46,9 @@ agree("entry")
 if trial and rank == 1 and batch < 16 and os.environ["PILOT_FIXTURE_STALL"] == "1":
     time.sleep(20)
 output.mkdir()
-states = json.dumps({"current": [[1, 0]] if rank == 0 else [], "previous_small": []}).encode()
+states = json.dumps({"current": [[1, 0] * 16] if rank == 0 and not trial else [], "previous_small": []}).encode()
 (output / "states.json").write_bytes(states)
-sizes = [1, 2, 9000, 12000, 16000] if trial else [1, 1]
+sizes = [math.comb(16, depth) for depth in range(10 if trial else 17)]
 layer_time = 0.1 if batch == 4 else 0.2
 report = {"status": "INCOMPLETE" if trial else "COMPLETE", "reason": "PROFILE_LAYER_LIMIT" if trial else "FRONTIER_EXHAUSTED",
     "rank": rank, "device": 0, "world": 2, "plan": config["rank_plans"][rank], "graph_digest": config["graph_digest"],
@@ -59,7 +60,7 @@ report = {"status": "INCOMPLETE" if trial else "COMPLETE", "reason": "PROFILE_LA
 ''', encoding="utf-8")
     runner = tmp_path / "rank_fixture.py"
     runner.write_text(r'''
-import json, os, subprocess, sys
+import json, math, os, subprocess, sys
 from pathlib import Path
 from unittest.mock import patch
 from multigpubfs import GraphDefinition, external_pilots, launch
@@ -69,11 +70,18 @@ rank = int(os.environ["RANK"])
 port = int(os.environ["MGBFS_CONTROL_PORT"])
 native, output = sys.argv[1:3]
 worker = Cluster(Placement(rank, 0, 2, "127.0.0.1", port, port, port, "pilot-fixture"), None, Path(output).parent)
-graph = GraphDefinition.permutation([[1,0]], [0,1])
+generators = []
+for pair in range(16):
+    permutation = list(range(32))
+    permutation[2*pair:2*pair+2] = reversed(permutation[2*pair:2*pair+2])
+    generators.append(permutation)
+graph = GraphDefinition.permutation(generators, [0,1]*16)
+stall = os.environ["PILOT_FIXTURE_STALL"] == "1"
 inventory = {"device": 0, "free_bytes": 1<<30, "total_bytes": 2<<30, "additional_reserve_bytes": 1<<20,
     "physical_free_bytes": 1<<29, "cold_additional_reserve_bytes": 1<<21}
 worker.inventory = lambda *_: inventory
 children = []
+resident_readmissions = []
 popen = subprocess.Popen
 
 def spawn(args, **kwargs):
@@ -84,14 +92,17 @@ def spawn(args, **kwargs):
 def production(args, env, log):
     assert len(children) >= 2 and all(child.poll() is not None for child in children)
     config = json.loads(Path(args[3]).read_text())
-    assert config["plan"]["batch"] == (16 if os.environ["PILOT_FIXTURE_STALL"] == "1" else 4)
+    assert config["plan"]["batch"] == (16 if stall else 4)
     return popen([sys.executable, native, *args[1:]], env=env, stdout=log, stderr=subprocess.STDOUT)
 
 def query(args, env, **kwargs):
     assert args[1] == "graph-plan"
     rows = json.loads(Path(args[3]).read_text())
     reserve = int(env["MGBFS_GENERIC_VRAM_RESERVE_BYTES"])
-    assert all(row["free_bytes"] == (1<<29 if reserve == 1<<21 else 1<<30) for row in rows)
+    assert all(row["free_bytes"] == (inventory["physical_free_bytes"] if reserve == 1<<21
+                                     else inventory["free_bytes"]) for row in rows)
+    if reserve == inventory["additional_reserve_bytes"] and len(args) > 6:
+        resident_readmissions.append((int(args[6]), reserve, [row["free_bytes"] for row in rows]))
     plan = {"world": 2, "shards": int(args[4]), "batch": int(args[6]) if len(args) > 6 else 16,
             "history_layers": 3, "history_algorithm": "HASH", "state_bytes": 1, "queue_capacity": 128}
     result = {"graph_digest": graph.digest(), "devices": [0,0], "inventory": rows, "plan": plan, "rank_plans": [plan, plan],
@@ -110,24 +121,38 @@ with patch.object(external_pilots.subprocess, "Popen", spawn), \
      patch.object(launch, "_require_memory_backend", return_value={"segmented_network_agreement_v1": True}):
     report = launch.run_graph(graph, output, device=0, executable=sys.executable, memory_backend="segmented24",
                               _native_env=dict(os.environ), autotune=True)
-assert report["layer_sizes"] == [1,1] and report["status"] == "COMPLETE"
+    if not stall:
+        children_before = len(children)
+        inventory["free_bytes"] -= 1<<24
+        inventory["additional_reserve_bytes"] = 0
+        os.environ["MGBFS_CONTROL_PORT"] = os.environ["PILOT_FIXTURE_REPLAY_PORT"]
+        replay = launch.run_graph(graph, output+"-replay", device=0, executable=sys.executable,
+                                  memory_backend="segmented24", _native_env=dict(os.environ), autotune=True)
+        assert replay["layer_sizes"] == report["layer_sizes"] and replay["status"] == "COMPLETE"
+        assert len(children) == children_before
+        if rank == 0:
+            assert resident_readmissions == [(4, 1<<20, [1<<30]*2), (4, 0, [inventory["free_bytes"]]*2)]
+        assert replay["autotune"] == dict(report["autotune"], status="REUSED_MEASURED_EXTERNAL_BATCH_PROFILE")
+assert report["layer_sizes"] == [math.comb(16, depth) for depth in range(17)] and report["status"] == "COMPLETE"
 profile = report["autotune"]
-assert profile["pilots"][0]["completed_depth"] == 4
-if os.environ["PILOT_FIXTURE_STALL"] == "1":
+assert profile["pilots"][0]["completed_depth"] == 9
+if stall:
     assert profile["pilots"][1]["status"] == "UNAVAILABLE"
     assert profile["selected_batch"] == 16 and profile["measured"] is False
 else:
-    assert profile["common_depth"] == 4 and profile["selected_batch"] == 4 and profile["measured"] is True
+    assert profile["common_depth"] == 9 and profile["selected_batch"] == 4 and profile["measured"] is True
 ''', encoding="utf-8")
-    with socket.socket() as reserved:
+    with socket.socket() as reserved, socket.socket() as replay:
         reserved.bind(("127.0.0.1", 0))
+        replay.bind(("127.0.0.1", 0))
         port = reserved.getsockname()[1]
+        replay_port = replay.getsockname()[1]
     jobs = []
     try:
         for rank in range(2):
             env = dict(os.environ, RANK=str(rank), WORLD_SIZE="2", LOCAL_RANK="0", MASTER_ADDR="127.0.0.1",
                        MASTER_PORT=str(port - 1), MGBFS_CONTROL_PORT=str(port), MGBFS_RUN_ID="pilot-fixture",
-                       PILOT_FIXTURE_STALL=str(int(stall)),
+                       PILOT_FIXTURE_STALL=str(int(stall)), PILOT_FIXTURE_REPLAY_PORT=str(replay_port),
                        PYTHONPATH=os.pathsep.join((str(Path(__file__).resolve().parents[1]), os.environ.get("PYTHONPATH", ""))))
             jobs.append(subprocess.Popen([sys.executable, str(runner), str(native), str(tmp_path / f"rank-{rank}")],
                                          env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT))
