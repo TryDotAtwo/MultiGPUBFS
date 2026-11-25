@@ -4,6 +4,14 @@ from http.client import IncompleteRead
 from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
 _MAX_BLOCK = 1 << 20
 
+def _deadline_remaining(deadline):
+ remaining=deadline-time.perf_counter()
+ if remaining<=0:raise TimeoutError('DISTRIBUTED_CONTROL_JOB_DEADLINE')
+ return remaining
+
+def _pause_retry(deadline):
+ time.sleep(.05 if deadline is None else min(.05,_deadline_remaining(deadline)))
+
 def _job_sequence(key):
     parts = key.split("/", 2)
     if len(parts) != 3 or parts[0] != "job":
@@ -155,24 +163,30 @@ class ControlStore:
    except urllib.error.HTTPError as error:raise RuntimeError('DISTRIBUTED_CONTROL_REJECTED_'+str(error.code)) from error
    except (OSError,urllib.error.URLError):
     if time.monotonic()>end:raise RuntimeError('DISTRIBUTED_CONTROL_UNAVAILABLE_NO_RESTART')
-    time.sleep(.05)
- def check_error(self):
-  try:v=self._request('/get','error')
-  except (OSError,urllib.error.URLError):return
+    _pause_retry(deadline)
+ def check_error(self,*,deadline=None):
+  wait={} if deadline is None else {'timeout':self._request_timeout(deadline)}
+  try:v=self._request('/get','error',**wait)
+  except (OSError,urllib.error.URLError):
+   if deadline is not None:_deadline_remaining(deadline)
+   return
   if v['present']:raise RuntimeError('DISTRIBUTED_PEER_ERROR: '+str(v['value']))
- def try_get(self,key,*,ranks=None):
+  if deadline is not None:_deadline_remaining(deadline)
+ def try_get(self,key,*,ranks=None,deadline=None):
   path='/get' if ranks is None else '/collect-ranks'
-  try:v=self._request(path,key,ranks)
+  wait={} if deadline is None else {'timeout':self._request_timeout(deadline)}
+  try:v=self._request(path,key,ranks,**wait)
   except urllib.error.HTTPError as error:raise RuntimeError('DISTRIBUTED_CONTROL_REJECTED_'+str(error.code)) from error
-  except (OSError,urllib.error.URLError):return None
+  except (OSError,urllib.error.URLError):
+   if deadline is not None:_deadline_remaining(deadline)
+   return None
   if v['error'] is not None:raise RuntimeError('DISTRIBUTED_PEER_ERROR: '+str(v['error']))
+  if deadline is not None:_deadline_remaining(deadline)
   return v['value'] if v['present'] else None
  @staticmethod
  def _request_timeout(deadline):
   if deadline is None:return 3
-  remaining=deadline-time.perf_counter()
-  if remaining<=0:raise TimeoutError('DISTRIBUTED_CONTROL_JOB_DEADLINE')
-  return min(3,remaining)
+  return min(3,_deadline_remaining(deadline))
  def get(self,key,timeout=None,*,deadline=None):
   end=time.monotonic()+(self.timeout if timeout is None else timeout)
   while True:
@@ -184,20 +198,23 @@ class ControlStore:
    except urllib.error.HTTPError as error:raise RuntimeError('DISTRIBUTED_CONTROL_REJECTED_'+str(error.code)) from error
    except (OSError,urllib.error.URLError):pass
    if time.monotonic()>end:raise RuntimeError('DISTRIBUTED_CONTROL_TIMEOUT_NO_RESTART '+key)
-   time.sleep(.05)
- def await_value(self,key,*,stop_key):
+   _pause_retry(deadline)
+ def await_value(self,key,*,stop_key,deadline=None):
   # Quiet peers stay available as long as the coordinator is responsive.
   end=time.monotonic()+self.timeout
   while True:
+   wait={} if deadline is None else {'timeout':self._request_timeout(deadline)}
    try:
-    value=self._request('/await',key,stop_key)
-    if value['error'] is not None:raise RuntimeError('DISTRIBUTED_PEER_ERROR: '+str(value['error']))
-    if value['present']:return value['value']
-    end=time.monotonic()+self.timeout
+    value=self._request('/await',key,stop_key,**wait)
    except urllib.error.HTTPError as error:raise RuntimeError('DISTRIBUTED_CONTROL_REJECTED_'+str(error.code)) from error
    except OSError:
     if time.monotonic()>end:raise RuntimeError('DISTRIBUTED_CONTROL_TIMEOUT_NO_RESTART '+key)
-    time.sleep(.05)
+    _pause_retry(deadline)
+    continue
+   if value['error'] is not None:raise RuntimeError('DISTRIBUTED_PEER_ERROR: '+str(value['error']))
+   if deadline is not None:_deadline_remaining(deadline)
+   if value['present']:return value['value']
+   end=time.monotonic()+self.timeout
  def report_error(self,error,world):
   """Preserve the first failure and give surviving ranks a shared drain deadline."""
   deadline=time.perf_counter()+5

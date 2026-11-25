@@ -260,7 +260,7 @@ class Cluster:
             inventory = self.store.get(prefix + "inventory")
             return inventory
 
-        recipe = profile_status = expected = None
+        recipe = profile_status = expected = profile_deadline = None
         registry = job.get("profile_registry")
         if registry is not None and network:
             from .process_control import ProfileBudgetExpired, profile_budget, profile_timeout
@@ -278,6 +278,7 @@ class Cluster:
             except (ProfileBudgetExpired, TimeoutError):
                 pass
             if rank == 0:
+                profile_deadline = deadline
                 def hardware():
                     control_deadline = time.perf_counter() + profile_timeout(5)
                     try:
@@ -330,6 +331,8 @@ class Cluster:
                 prepared["_external_inventory"] = inventory
             if recipe is not None:
                 prepared["_external_admission"] = {"plan": recipe.admission, "artifacts": artifacts}
+            elif profile_deadline is not None and autotune:
+                prepared["_external_profile_deadline"] = profile_deadline
         report = run_graph(graph, output, device=self._local_device(),
                            executable=native, backend="generic", memory_backend=memory.backend,
                            memory_preset=launch_preset, segment_strategy=memory.strategy, _native_env=env,

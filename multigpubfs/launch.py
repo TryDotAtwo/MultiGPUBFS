@@ -248,7 +248,7 @@ def _stop_rank_jobs(jobs,grace=10.0,kill_grace=5.0):
 
 from .work_limits import normalize, wire, remaining as remaining_work, phase_expired
 
-def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend=None,segment_rows=None,memory_preset='balanced',segment_strategy=None,peer_transport='auto',transport='auto',candidate_order='auto',bitmap_owner_page=None,bitmap_pack4=None,resident_alphabet8=None,queue_capacity=None,owner_lanes=None,_batch=None,_profile_layers=None,_native_env=None,_profile_options=None,_profile_deadline=None,_path_targets=None,_path_bidirectional=False,_path_window=None,_path_max_depth=None,_external_inventory=None,_external_admission=None):
+def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend=None,segment_rows=None,memory_preset='balanced',segment_strategy=None,peer_transport='auto',transport='auto',candidate_order='auto',bitmap_owner_page=None,bitmap_pack4=None,resident_alphabet8=None,queue_capacity=None,owner_lanes=None,_batch=None,_profile_layers=None,_native_env=None,_profile_options=None,_profile_deadline=None,_path_targets=None,_path_bidirectional=False,_path_window=None,_path_max_depth=None,_external_inventory=None,_external_admission=None,_external_profile_deadline=None):
  """Launch on all visible GPUs by default, or an explicit device/device list.
 
  Memory is admitted from actual free VRAM. With shards omitted, bounded
@@ -527,7 +527,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   from .distributed_launch import run_external
   if _path_targets is not None:
    return run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune,batch=_batch,path_targets=_path_targets,path_bidirectional=_path_bidirectional,path_window=_path_window,path_max_depth=_path_max_depth)
-  return finish(run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune,batch=_batch,inventory_snapshot=_external_inventory,admitted_plan=_external_admission))
+  return finish(run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune,batch=_batch,inventory_snapshot=_external_inventory,admitted_plan=_external_admission,profile_deadline=_external_profile_deadline))
  output=Path(output).absolute()
  if output.exists():raise FileExistsError(output)
  profile=None

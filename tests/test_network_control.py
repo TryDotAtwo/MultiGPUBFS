@@ -1,6 +1,8 @@
 import unittest,socket
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
+from types import SimpleNamespace
+from unittest.mock import patch
 from multigpubfs.network_control import ControlStore
 class NetworkControlTests(unittest.TestCase):
  def test_identity_token_immutable_keys_and_timeout(self):
@@ -35,6 +37,25 @@ class NetworkControlTests(unittest.TestCase):
     publishing.result(timeout=2)
    self.assertEqual(client.get('error'),'coordinator failed')
   finally:server.close()
+
+ def test_bounded_decision_wait_caps_request_and_retry(self):
+  client=ControlStore('127.0.0.1',1,1,'session',2)
+  now=100.0
+  deadline=now+.03125
+  def sleep(seconds):
+   nonlocal now
+   now+=seconds
+  clock=SimpleNamespace(monotonic=lambda:now,perf_counter=lambda:now,sleep=sleep)
+  with patch('multigpubfs.network_control.time',clock), patch.object(client,'_request',side_effect=OSError) as request:
+   with self.assertRaisesRegex(TimeoutError,'DISTRIBUTED_CONTROL_JOB_DEADLINE'):
+    client.await_value('pilot/go',stop_key='pilot/stop',deadline=deadline)
+   request.assert_called_once_with('/await','pilot/go','pilot/stop',timeout=.03125)
+   self.assertEqual(now,deadline)
+   with self.assertRaisesRegex(TimeoutError,'DISTRIBUTED_CONTROL_JOB_DEADLINE'):
+    client.check_error(deadline=deadline)
+   with self.assertRaisesRegex(TimeoutError,'DISTRIBUTED_CONTROL_JOB_DEADLINE'):
+    client.try_get('pilot/go',deadline=deadline)
+   self.assertEqual(request.call_count,1)
 
  def test_delayed_duplicate_cannot_restore_a_retired_job_reply(self):
   with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
