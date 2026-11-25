@@ -56,10 +56,9 @@ def cluster_rank_hardware(env, host):
     return metadata
 
 
-def _compatible_recipe(entry, preset, env, capabilities, packet_address):
+def _compatible_recipe(profile, env, capabilities, packet_address):
     from .memory_admission import TraversalMemory
 
-    profile = entry["profiles"]["max_capacity" if preset == "maxmemory" else "balanced"]
     backend = profile["memory_backend"]
     strategy = profile["strategy"]
     codec = profile["resident_codec"]
@@ -131,7 +130,7 @@ def _compatible_recipe(entry, preset, env, capabilities, packet_address):
         "bitmap_pack4": codec == "pack4-v1",
         "resident_alphabet8": codec == "alphabet8-v1",
     }
-    return TraversalMemory(backend, strategy, "LIVE_ADMITTED_REGISTRY_PROFILE", options), settings, profile
+    return TraversalMemory(backend, strategy, "LIVE_ADMITTED_REGISTRY_PROFILE", options), settings
 
 
 def _live_admit(graph, preset, native, env, capabilities, inventory, memory, settings, profile):
@@ -256,26 +255,31 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
                        and entry["profiles"]["balanced"]["pressure_namespace"] in acceptable]
             if not matches:
                 return None, status
-            baseline = matches[0]["profiles"]["balanced"]
-            fastest_balanced = baseline["bfs_seconds"]
+            candidates = sorted(
+                ((entry, arm, profile) for entry in matches for arm, profile in entry["profiles"].items()),
+                key=lambda item: item[2]["bfs_seconds"],
+            )
+            baseline = candidates[0][2]
+            fastest = baseline["bfs_seconds"]
             baseline_peaks = baseline["peak_vram_bytes_by_rank"]
             if preset == "maxmemory":
-                matches = [entry for entry in matches
-                           if baseline_peaks and entry["capacity_verification"] == "LOWER_PHYSICAL_PEAK"
-                           and max(entry["profiles"]["max_capacity"]["peak_vram_bytes_by_rank"]) < max(baseline_peaks)
-                           and entry["profiles"]["max_capacity"]["bfs_seconds"] <= 4 * fastest_balanced]
-                matches.sort(key=lambda entry: (
-                    max(entry["profiles"]["max_capacity"]["peak_vram_bytes_by_rank"]),
-                    entry["profiles"]["max_capacity"]["bfs_seconds"],
+                candidates = [(entry, arm, profile) for entry, arm, profile in candidates
+                              if arm == "max_capacity" and baseline_peaks
+                              and entry["capacity_verification"] == "LOWER_PHYSICAL_PEAK"
+                              and (profile is baseline or max(profile["peak_vram_bytes_by_rank"]) < max(baseline_peaks))
+                              and profile["bfs_seconds"] <= 4 * fastest]
+                candidates.sort(key=lambda item: (
+                    max(item[2]["peak_vram_bytes_by_rank"]), item[2]["bfs_seconds"],
                 ))
-            for entry in matches[:3]:
+            for entry, arm, profile in candidates[:3]:
                 profile_timeout(5)
-                candidate = _compatible_recipe(entry, preset, env, capabilities, packet_address)
+                recipe_preset = "maxmemory" if arm == "max_capacity" else "balanced"
+                candidate = _compatible_recipe(profile, env, capabilities, packet_address)
                 if candidate is None:
                     status = {"status": "RECIPE_UNAVAILABLE"}
                     continue
-                memory, settings, profile = candidate
-                refusal = _live_admit(graph, preset, native, env, capabilities, inventory(),
+                memory, settings = candidate
+                refusal = _live_admit(graph, recipe_preset, native, env, capabilities, inventory(),
                                       memory, settings, profile)
                 if refusal is not None:
                     status = {"status": refusal}
@@ -283,12 +287,14 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
                 status = {
                     "status": "LIVE_ADMITTED_REGISTRY_PROFILE",
                     "evidence_sha256": entry["evidence_sha256"],
+                    "requested_preset": preset,
+                    "recipe_preset": recipe_preset,
                     "historical_verification": entry["capacity_verification"],
-                    "historical_ratio": entry["profiles"]["max_capacity"]["bfs_seconds"] / fastest_balanced,
+                    "historical_ratio": entry["profiles"]["max_capacity"]["bfs_seconds"] / fastest,
                     "scope": "FULL_BFS_HISTORICAL_PROFILE",
                 }
                 profile_timeout(5)
-                return (memory, settings, profile), status
+                return (memory, settings, profile, recipe_preset), status
             return None, status
     except ProfileBudgetExpired:
         return None, {"status": "REGISTRY_STARTUP_DEADLINE"}

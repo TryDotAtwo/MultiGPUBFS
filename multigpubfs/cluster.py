@@ -284,9 +284,11 @@ class Cluster:
                     hardware=hardware, inventory=load_inventory,
                     packet_address=self._packet_address if self.placement.packet_port is not None else None,
                 )
-                resolved = None if recipe is None else {
-                    "memory": vars(recipe[0]), "settings": recipe[1], "geometry": recipe[2],
-                }
+                resolved = None
+                if recipe is not None:
+                    memory, settings, expected, launch_preset = recipe
+                    resolved = {"memory": vars(memory), "settings": settings, "geometry": expected,
+                                "preset": launch_preset}
                 self.store.put(prefix + "profile-selection", {"recipe": resolved, "receipt": profile_status})
             else:
                 # Only the coordinator may choose a recipe or the fallback for this job.
@@ -296,24 +298,26 @@ class Cluster:
                     from .memory_admission import TraversalMemory
 
                     payload = profile["recipe"]
-                    recipe = TraversalMemory(**payload["memory"]), payload["settings"], payload["geometry"]
+                    recipe = (TraversalMemory(**payload["memory"]), payload["settings"], payload["geometry"],
+                              payload["preset"])
+        launch_preset = preset
         if recipe is None:
             memory = resolve_traversal_memory(
                 graph, preset, capabilities if network else {}, env, manual, load_inventory,
                 default_backend="segmented24" if network else "legacy",
             )
         else:
-            memory, settings, expected = recipe
+            memory, settings, expected, launch_preset = recipe
             env = dict(env, **settings)
             autotune = False
         if network:
             env = _traversal_exchange_env(
-                env, capabilities, world, transport, preset, autotune,
+                env, capabilities, world, transport, launch_preset, autotune,
                 self._packet_address if self.placement.packet_port is not None else None, external=True,
             )
         report = run_graph(graph, output, device=self._local_device(),
                            executable=native, backend="generic", memory_backend=memory.backend,
-                           memory_preset=preset, segment_strategy=memory.strategy, _native_env=env,
+                           memory_preset=launch_preset, segment_strategy=memory.strategy, _native_env=env,
                            autotune=autotune, max_seconds=job["max_seconds"], **memory.launch_options)
         report["cluster_memory_backend"] = memory.backend
         report["cluster_memory_selection_reason"] = memory.reason

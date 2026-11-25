@@ -173,6 +173,86 @@ def test_public_session_replays_pinned_recipe_and_keeps_manual_and_fallback_path
     assert (len(topology_calls), len(inventory_calls), len(plans)) == (4, 2, 1)
 
 
+def test_public_balanced_replays_faster_capacity_recipe_and_can_fall_back(tmp_path, monkeypatch, registry_case):
+    case = registry_case
+    catalog = json.loads(case["catalog"].read_bytes())
+    entry = catalog["entries"][0]
+    balanced = dict(case["profile"], pressure_namespace="ambient", peak_vram_bytes_by_rank=[200, 200])
+    wire = {"protocol": "nccl_compact_credit_v2", "wire_record_bytes_per_row": 16,
+            "wire_state_bytes_per_row": 0, "pack4_direct_owner": True, "byte_direct_owner": False,
+            "route_receive_progress": True, "pinned_route_metadata": True}
+    plan = dict(case["plan"], compact_transport=True, compact_route_lookahead=True,
+                compact_packet_slots=3, compact_receive_slots=3)
+    capacity = dict(balanced, **plan)
+    capacity.update(memory_backend="permutation_bitmap", strategy="atomic", resident_codec="pack4-v1",
+                    banks=2, owner_cuts=None, hash_lookup_series_limit=None, batch_hash_prefix_probe=False,
+                    packet_wire=wire, bfs_seconds=1.0, peak_vram_bytes_by_rank=[100, 100])
+    entry.update(profiles={"balanced": balanced, "max_capacity": capacity},
+                 capacity_verification="LOWER_PHYSICAL_PEAK")
+    case["catalog"].write_text(json.dumps(catalog), encoding="utf-8")
+    capabilities = dict(case["capabilities"], permutation_bitmap_v1=True, bitmap_pack4_experimental_v1=True,
+                        segmented_packet_transport_v1=True)
+    packet_key, address = "MGBFS_SEGMENT_PACKET_CONTROL_ADDR", "127.0.0.1:12000"
+    reject_capacity = False
+    admitted, launched = [], []
+
+    def graph_plan(command, *, env, **_):
+        preset = env["MGBFS_MEMORY_PRESET"]
+        admitted.append(preset)
+        if preset == "max_capacity":
+            assert env[packet_key] == address and env["MGBFS_BITMAP_BANKS"] == "2"
+            assert env["MGBFS_SEGMENT_PACKET_RX_SLOTS"] == env["MGBFS_SEGMENT_PACKET_RING_SLOTS"] == "3"
+            actual = dict(plan, compact_receive_slots=1) if reject_capacity else plan
+            receipt = {"plan": actual}
+        else:
+            assert preset == "balanced" and packet_key not in env
+            receipt = {"plan": case["plan"], "owner_cuts": case["cuts"]}
+        return CompletedProcess(command, 0, stdout=json.dumps(receipt))
+
+    def native_launch(graph, output, **options):
+        launched.append(options["memory_preset"])
+        assert not options["autotune"]
+        output.mkdir()
+        (output / "states.json").write_text(
+            json.dumps({"current": [[1, 0]], "previous_small": [[0, 1]]}), encoding="utf-8",
+        )
+        if options["memory_preset"] == "balanced":
+            assert options["memory_backend"] == "segmented24" and packet_key not in options["_native_env"]
+            return _native_receipt(case)
+        assert options["memory_preset"] == "maxmemory" and options["memory_backend"] == "permutation_bitmap"
+        assert options["_native_env"][packet_key] == address and options["bitmap_pack4"]
+        report = _native_receipt(dict(case, profile=capacity, plan=plan, cuts=None))
+        report.update(backend="EXPERIMENTAL_PERMUTATION_BITMAP", bfs_seconds=capacity["bfs_seconds"])
+        for rank in report["segment_memory_by_rank"]:
+            rank["packet_transport"] = dict(wire, tx_exchange_slots=3, rx_exchange_slots=3)
+        return report
+
+    monkeypatch.delenv("WORLD_SIZE", raising=False)
+    monkeypatch.setattr(api, "native_runtime", lambda _: ("test-native", {}))
+    monkeypatch.setattr(api, "_require_memory_backend", lambda *_: capabilities)
+    monkeypatch.setattr(api.BfsSession, "_live_inventory", lambda *_: case["inventory"])
+    monkeypatch.setattr(api.BfsSession, "_local_packet_address", lambda _: address)
+    monkeypatch.setattr(api, "run_graph", native_launch)
+    monkeypatch.setattr(native_distribution, "runtime_identity", lambda *_: case["runtime"])
+    monkeypatch.setattr(profile_selection, "local_hardware", lambda: (case["topology"], case["driver"]))
+    monkeypatch.setattr(profile_selection, "query", graph_plan)
+    with open_session(devices=case["devices"], output_root=tmp_path, profile_registry=case["catalog"]) as session:
+        fastest = session.bfs(case["graph"], preset="balanced")
+        lowest = session.bfs(case["graph"], preset="maxmemory")
+        reject_capacity = True
+        fallback = session.bfs(case["graph"], preset="balanced")
+
+    assert admitted == ["max_capacity", "max_capacity", "max_capacity", "balanced"]
+    assert launched == ["maxmemory", "maxmemory", "balanced"]
+    for result, requested, recipe in zip((fastest, lowest, fallback),
+                                         ("balanced", "maxmemory", "balanced"),
+                                         ("maxmemory", "maxmemory", "balanced")):
+        policy = result.report["session_policy"]
+        receipt = policy["profile_registry"]
+        assert policy["preset"] == receipt["requested_preset"] == requested
+        assert receipt["recipe_preset"] == recipe and receipt["runtime_geometry"] == "MATCHED"
+
+
 @pytest.mark.parametrize("metadata_timeout", [False, True])
 def test_cluster_coordinator_admits_one_recipe_for_all_ranks(tmp_path, monkeypatch, registry_case, metadata_timeout):
     case = registry_case

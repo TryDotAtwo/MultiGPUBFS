@@ -392,18 +392,19 @@ class BfsSession:
                     registry, graph, preset, native, env, capabilities, deadline,
                     hardware=hardware, inventory=lambda: inventory, packet_address=self._local_packet_address,
                 )
+            launch_preset = preset
             if recipe is None:
                 memory, capabilities = self._memory_policy(graph, devices, native, env, preset, manual,
                                                            inventory=inventory)
             else:
-                memory, settings, expected = recipe
+                memory, settings, expected, launch_preset = recipe
                 env = dict(env, **settings)
             backend = memory.backend
             manual = memory.launch_options
             transport = manual.pop("transport", None)
             autotune = self._tune != "off" and not native_options and recipe is None
             env = _traversal_exchange_env(
-                env, capabilities, len(devices), transport, preset, autotune, self._local_packet_address,
+                env, capabilities, len(devices), transport, launch_preset, autotune, self._local_packet_address,
             )
             tuning = {"capacity_slowdown_limit": 4.0}
             if self._tune == "auto":
@@ -413,7 +414,7 @@ class BfsSession:
             report = run_graph(
                 graph, output, devices=devices, executable=native, backend="generic",
                 autotune=autotune, max_seconds=max_seconds,
-                memory_backend=backend, segment_strategy=memory.strategy, memory_preset=preset,
+                memory_backend=backend, segment_strategy=memory.strategy, memory_preset=launch_preset,
                 _native_env=env, _profile_options=tuning, **manual,
             )
             policy = {"preset": preset, "memory_backend": backend, "selection_reason": memory.reason}
