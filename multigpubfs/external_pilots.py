@@ -76,19 +76,23 @@ def launch_trial(store, label, config, deadline, *, temporary, native, definitio
                         raise RuntimeError("EXTERNAL_PROFILE_CHILD_CLEANUP_UNCONFIRMED_NO_RESTART") from error
 
 
-def run_batch_trials(store, rank, world, baseline, startup_deadline, admit_cold, admit_resident, launch):
+def run_batch_trials(store, rank, world, baseline, startup_deadline, admit_cold, admit_resident, launch,
+                     *, reuse=None):
     """Choose at rank zero, after all ranks have reaped each trial process."""
     selection_key = f"{_PREFIX}/selection"
     if rank != 0:
         watchdog = time.perf_counter() + _PEER_WATCHDOG_SECONDS
         for index in range(3):
             label = f"{_PREFIX}/trial-{index}"
+            ready_at = time.perf_counter()
+            store.put(f"{label}/ready/{rank}", True, deadline=watchdog)
             trial = store.await_value(f"{label}/launch", stop_key=selection_key, deadline=watchdog)
             if trial is None:
                 break
-            local_end = min(watchdog, time.perf_counter() + trial["seconds"])
-            report = launch(label, trial["config"], local_end)
-            store.put(f"{label}/reaped/{rank}", report, deadline=local_end + _CLEANUP_SECONDS)
+            local_end = min(watchdog, ready_at + trial["lease_seconds"])
+            report = launch(label, trial["config"], local_end) if time.perf_counter() < local_end else None
+            acknowledge_end = min(watchdog, max(time.perf_counter(), local_end) + _CLEANUP_SECONDS)
+            store.put(f"{label}/reaped/{rank}", report, deadline=acknowledge_end)
         selection = store.get(selection_key, deadline=watchdog)
         return selection["admission"], selection["profile"]
 
@@ -101,6 +105,17 @@ def run_batch_trials(store, rank, world, baseline, startup_deadline, admit_cold,
         planning_end = end - _CLEANUP_SECONDS - _MIN_TRIAL_SECONDS
         if time.perf_counter() >= planning_end:
             return None
+        label = f"{_PREFIX}/trial-{index}"
+        ready = f"{label}/ready/"
+        try:
+            store.put(ready + "0", True, deadline=planning_end)
+            while store.try_get(ready, ranks=world, deadline=planning_end) is None:
+                time.sleep(min(0.01, max(0.0, planning_end - time.perf_counter())))
+        except TimeoutError:
+            return None
+        # Each peer sampled its local clock before making its Ready visible.
+        # The same interval from that earlier sample expires no later than ours.
+        lease_reference = time.perf_counter()
         candidate = admit_cold(batch, planning_end)
         if candidate is None:
             return None
@@ -110,12 +125,11 @@ def run_batch_trials(store, rank, world, baseline, startup_deadline, admit_cold,
         seconds = min(1.75, (end - now - _CLEANUP_SECONDS) / 2)
         if seconds < _MIN_TRIAL_SECONDS:
             return None
-        label = f"{_PREFIX}/trial-{index}"
         index += 1
         trial_end = now + seconds
         cleanup_end = min(end, trial_end + _CLEANUP_SECONDS)
         launch_key = f"{label}/launch"
-        request = {"config": config, "seconds": seconds}
+        request = {"config": config, "lease_seconds": trial_end - lease_reference}
         stop_sent = False
         try:
             try:
@@ -146,15 +160,19 @@ def run_batch_trials(store, rank, world, baseline, startup_deadline, admit_cold,
             return None
         return admission, reports
 
-    selected, profile = select_batch_pilot(baseline, probe)
-    if selected is not baseline:
-        candidate = admit_resident(selected["plan"]["batch"], end - 0.125)
-        if candidate is None:
-            profile = dict(profile, status="EXTERNAL_PROFILE_RESIDENT_READMISSION_UNAVAILABLE",
-                           selected_batch=baseline["plan"]["batch"])
-            selected = baseline
-        else:
-            selected = candidate
+    cached = reuse(end) if reuse is not None and time.perf_counter() < end else None
+    if cached is not None:
+        selected, profile = cached
+    else:
+        selected, profile = select_batch_pilot(baseline, probe)
+        if selected is not baseline:
+            candidate = admit_resident(selected["plan"]["batch"], end - 0.125)
+            if candidate is None:
+                profile = dict(profile, status="EXTERNAL_PROFILE_RESIDENT_READMISSION_UNAVAILABLE",
+                               selected_batch=baseline["plan"]["batch"])
+                selected = baseline
+            else:
+                selected = candidate
     result = {"admission": selected, "profile": profile}
     # This mandatory decision releases ranks that are waiting for production.
     store.put(selection_key, result, deadline=time.perf_counter() + _CLEANUP_SECONDS)
