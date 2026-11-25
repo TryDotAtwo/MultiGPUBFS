@@ -143,16 +143,7 @@ impl PinnedArchive {
             Archive::new_selected(extent, disk_bytes, width, config_digest)?
         } else if state_only { Archive::new_state_only(extent, disk_bytes, width, config_digest)? } else { Archive::new_run_durable(extent, disk_bytes, width, config_digest)? };
         let (free_tx, free) = mpsc::sync_channel(slots);
-        let cached=crate::session_cache::pinned_count(bytes).min(slots);
-        let missing=slots-cached;
-        let allocation=if missing>0 {Some(HostBlock::new(bytes.checked_mul(missing).ok_or("ARCHIVE_PIN_OVERFLOW")?)?)} else {None};
-        for index in 0..slots {
-            let slot=if let Some((ptr,ready,allocation))=crate::session_cache::pinned_take(bytes) {
-                Slot {ptr,bytes,ready,allocation}
-            } else {
-                Slot::new(bytes,allocation.as_ref().ok_or("ARCHIVE_CACHE_COUNT")?.clone(),
-                          (index-cached).checked_mul(bytes).ok_or("ARCHIVE_PIN_OVERFLOW")?)?
-            };
+        for (index, slot) in Slot::new_ring(bytes, slots)?.into_iter().enumerate() {
             if index < initial_slots {
                 free_tx.try_send(slot).map_err(|_| "ARCHIVE_INIT_QUEUE")?;
             } else { reserve.push(slot); }

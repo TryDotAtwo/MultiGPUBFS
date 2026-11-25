@@ -64,6 +64,7 @@ pub fn prepare_pinned(bytes: usize, slots: usize) {
         c.pinned = keep;
     });
 }
+#[cfg(test)]
 pub fn pinned_count(bytes: usize) -> usize {
     CACHE.with(|c|c.borrow().pinned.iter().filter(|(_,n,_,_)|*n==bytes).count())
 }
