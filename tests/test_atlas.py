@@ -271,11 +271,12 @@ def test_path_queries_have_pinned_artifacts_and_preserve_traversal(tmp_path):
     assert len(hub.commits) == 4
 
 
-@pytest.mark.parametrize(("bad_schema", "error"), [
-    (False, "row count differs"),
-    (True, "generator-ID sequence schema"),
+@pytest.mark.parametrize(("fault", "error"), [
+    ("omitted_rows", "row count differs"),
+    ("schema", "generator-ID sequence schema"),
+    ("target_index", "path rows are inconsistent"),
 ])
-def test_external_manifest_must_have_matching_parquet_evidence(tmp_path, bad_schema, error):
+def test_external_manifest_must_have_matching_parquet_evidence(tmp_path, fault, error):
     output = tmp_path / "nearest"
     paths(output, "nearest")
     source = LocalHub(tmp_path / "external-cache")
@@ -285,8 +286,10 @@ def test_external_manifest_must_have_matching_parquet_evidence(tmp_path, bad_sch
     manifest = json.loads(files[row["manifest_path"]])
     part = manifest["parts"][0]
     original = from_bytes(files[part["path"]])
-    if bad_schema:
+    if fault == "schema":
         invalid = original.set_column(2, "generator_ids", pa.array([[0]], type=pa.list_(pa.int64())))
+    elif fault == "target_index":
+        invalid = original.set_column(0, "target_index", pa.array([2], type=pa.int64()))
     else:
         invalid = original.slice(0, 0)
     buffer = pa.BufferOutputStream()
@@ -303,6 +306,24 @@ def test_external_manifest_must_have_matching_parquet_evidence(tmp_path, bad_sch
     with pytest.raises(ValueError, match=error):
         publish(output, token=False, author="Ivan", api=atlas, manifest=pointer)
     assert not atlas.commits
+
+
+def test_bad_generator_ids_are_rejected_before_staging_even_beyond_old_coverage(tmp_path):
+    hub = LocalHub(tmp_path / "cache")
+    initial = hub.head
+    wrong_nearest = tmp_path / "wrong-nearest"
+    paths(wrong_nearest, mode="nearest", sequences=[[8]])
+    with pytest.raises(ValueError, match="path rows are inconsistent"):
+        publish(wrong_nearest, token=False, author="Ivan", api=hub)
+    assert hub.head == initial and not hub.commits
+
+    prior, candidate = (tmp_path / name for name in ("prior", "candidate"))
+    paths(prior, status="INCOMPLETE", extra=2, completed=1, sequences=[[0], [1]])
+    published = publish(prior, token=False, author="Ivan", api=hub, include_incomplete=True)
+    paths(candidate, extra=2, sequences=[[0], [1], [0, 0, 8]])
+    with pytest.raises(ValueError, match="path rows are inconsistent"):
+        publish(candidate, token=False, author="Ivan", api=hub)
+    assert hub.head == published.revision and len(hub.commits) == 2
 
 
 def test_invalid_and_incomplete_path_results(tmp_path):

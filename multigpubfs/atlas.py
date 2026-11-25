@@ -560,42 +560,44 @@ def _check_manifest(hub, pointer, query):
     if (definition.digest() != query["graph_sha256"] or definition.start != query["start_state"]
             or _digest(_json(definition.action)) != query["generators_sha256"]):
         raise ValueError("path manifest graph does not match the query")
-    return {key: pointer[key] for key in ("repo_id", "revision", "path", "sha256")}, parts, definition.generator_count
+    return ({key: pointer[key] for key in ("repo_id", "revision", "path", "sha256")},
+            parts, definition.generator_count, found)
 
 
-def _path_words(hub, pointer, parts, staged_files, query, generator_count, through=None):
-    import pyarrow.dataset as ds
+def _path_rows(hub, pointer, parts, staged_files, remote_items, query, generator_count):
+    import pyarrow.parquet as pq
 
-    counts = {entry["length"]: int(entry["count"]) for entry in query["counts"]
-              if through is None or entry["length"] <= through}
+    counts = {entry["length"]: int(entry["count"]) for entry in query["counts"]}
     columns = ["length", "target_index", "generator_ids"]
-    predicate = None if through is None else ds.field("length") <= through
     for part in parts:
         path = part["path"]
-        file = (staged_files[path].payload if staged_files is not None else
-                hub.get(path, pointer["revision"], pointer["repo_id"]))
-        batches = ds.dataset(file, format="parquet").to_batches(
-            columns=columns, filter=predicate, batch_size=1024,
-            batch_readahead=1, fragment_readahead=1, use_threads=False,
-        )
-        for batch in batches:
-            for length, target, labels in zip(*(column.to_pylist() for column in batch.columns)):
-                if (type(length) is not int or type(target) is not int or not 0 <= target < len(query["targets"])
-                        or not isinstance(labels, list) or length != len(labels)
-                        or any(type(label) is not int or not 0 <= label < generator_count for label in labels)
-                        or counts.get(length, 0) <= 0):
-                    raise ValueError("path rows are inconsistent with their receipt or generator IDs")
-                counts[length] -= 1
-                yield length, target, struct.pack(f"<{length}i", *labels)
+        stream = (staged_files[path].payload.open("rb") if staged_files is not None else
+                  hub.open_part(path, pointer["revision"], pointer["repo_id"], remote_items[path]))
+        with stream, pq.ParquetFile(stream) as parquet:
+            for batch in parquet.iter_batches(columns=columns, batch_size=1024, use_threads=False):
+                for length, target, labels in zip(*(batch.column(name).to_pylist() for name in columns)):
+                    if (type(length) is not int or type(target) is not int or not 0 <= target < len(query["targets"])
+                            or not isinstance(labels, list) or length != len(labels)
+                            or any(type(label) is not int or not 0 <= label < generator_count for label in labels)
+                            or counts.get(length, 0) <= 0):
+                        raise ValueError("path rows are inconsistent with their receipt or generator IDs")
+                    counts[length] -= 1
+                    yield length, target, labels
     if any(counts.values()):
         raise ValueError("path rows are inconsistent with their per-length counts")
 
 
-def _verify_path_extension(hub, previous, old, pointer, parts, staged_files, new, generator_count):
+def _word_key(length, target, labels):
+    return length, target, struct.pack(f"<{length}i", *labels)
+
+
+def _verify_path_extension(hub, previous, old, current_rows, generator_count):
     remaining = _part_count(old)
     if not remaining:
+        for _ in current_rows:
+            pass
         return
-    previous, old_parts, _ = _check_manifest(hub, previous, old)
+    previous, old_parts, _, old_items = _check_manifest(hub, previous, old)
     previous_end = old["completed_through_length"]
     last_emitted = max(entry["length"] for entry in old["counts"] if int(entry["count"]))
     overlap = max(last_emitted, previous_end if previous_end is not None else 0)
@@ -606,11 +608,15 @@ def _verify_path_extension(hub, previous, old, pointer, parts, staged_files, new
                      "PRIMARY KEY(length, target, word)) WITHOUT ROWID")
         try:
             rows.executemany("INSERT INTO routes VALUES (?, ?, ?, 1)",
-                             _path_words(hub, previous, old_parts, None, old, generator_count))
+                             (_word_key(*route) for route in _path_rows(
+                                 hub, previous, old_parts, None, old_items, old, generator_count)))
         except sqlite3.IntegrityError as exc:
             raise ValueError("published path evidence contains duplicate routes") from exc
-        for route in _path_words(hub, pointer, parts, staged_files, new, generator_count, through=overlap):
-            if previous_end is not None and route[0] <= previous_end:
+        for length, target, labels in current_rows:
+            if length > overlap:
+                continue
+            route = _word_key(length, target, labels)
+            if previous_end is not None and length <= previous_end:
                 # A completed length must contain exactly the same words.
                 matched = rows.execute("DELETE FROM routes WHERE (length, target, word) = (?, ?, ?)", route).rowcount
                 if not matched:
@@ -675,11 +681,12 @@ def _publish_paths(hub, output, raw, report, graph, definition, author, manifest
 
     query = _query(report, graph)
     staged_files = None
+    remote_items = None
     if manifest is None:
         manifest, parts, staged_files = _local_manifest(hub, output, raw, report, query, definition, author)
         generator_count = definition.generator_count
     else:
-        manifest, parts, generator_count = _check_manifest(hub, manifest, query)
+        manifest, parts, generator_count, remote_items = _check_manifest(hub, manifest, query)
     fingerprint = _digest(_json({
         "query": {key: query[key] for key in (
             "query_id", "status", "targets", "d_min", "max_length", "counts", "completed_through_length",
@@ -692,10 +699,14 @@ def _publish_paths(hub, output, raw, report, graph, definition, author, manifest
         "manifest_path": manifest["path"], "manifest_sha256": manifest["sha256"],
     }
 
+    verified_current = False
     verified_previous = None
 
+    def current_rows():
+        return _path_rows(hub, manifest, parts, staged_files, remote_items, query, generator_count)
+
     def prepare(revision, inspect_only=False):
-        nonlocal verified_previous
+        nonlocal verified_current, verified_previous
         card = _path_card(hub.get("README.md", revision).read_bytes())
         files = {"README.md": card} if card is not None else {}
         if _PATH_INDEX in hub.files([_PATH_INDEX], revision):
@@ -722,12 +733,18 @@ def _publish_paths(hub, output, raw, report, graph, definition, author, manifest
             previous["repo_id"] = old["manifest_repo"]
             previous_result = previous, old["result_sha256"]
             if verified_previous != previous_result:
-                _verify_path_extension(hub, previous, old, manifest, parts, staged_files, row, generator_count)
+                with closing(current_rows()) as evidence:
+                    _verify_path_extension(hub, previous, old, evidence, generator_count)
+                verified_current = True
                 verified_previous = previous_result
             row["case_id"] = old["case_id"]
             rows[i] = row
         else:
             rows.append(row)
+        if not verified_current:
+            for _ in current_rows():
+                pass
+            verified_current = True
         if inspect_only:
             return None
         files[_PATH_INDEX] = _parquet(pa.Table.from_pylist(rows, schema=schema), row_group_size=1)
