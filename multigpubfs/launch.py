@@ -447,12 +447,11 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    if count.returncode:raise RuntimeError('NATIVE_GPU_DISCOVERY_FAILED: '+count.stderr[-4000:])
    selected=list(range(int(count.stdout.strip())))
  cold_geometry=None
- if (segmented and _path_targets is None and _profile_layers is None and exchange_capable
+ if (not external and segmented and _path_targets is None and _profile_layers is None and exchange_capable
      and shards is None and _batch is None and segment_rows is None
-     and (not autotune or _profile_options is None or _profile_options.get('pilot_limit') is not None)):
+     and (not autotune or (_profile_options or {}).get('pilot_limit') is not None)):
   from .shard_policy import balanced_pack4_geometry
-  world=int(os.environ['WORLD_SIZE']) if external else len(selected or ())
-  cold_geometry=balanced_pack4_geometry(graph,world,native_env)
+  cold_geometry=balanced_pack4_geometry(graph,len(selected or ()),native_env)
   if cold_geometry is not None:
    native_env['MGBFS_SEGMENT_EXACT_EXCHANGE']='1'
    autotune=False
@@ -528,7 +527,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   from .distributed_launch import run_external
   if _path_targets is not None:
    return run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune,batch=_batch,path_targets=_path_targets,path_bidirectional=_path_bidirectional,path_window=_path_window,path_max_depth=_path_max_depth)
-  return finish(run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune,batch=_batch,cold_geometry=cold_geometry))
+  return finish(run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune,batch=_batch))
  output=Path(output).absolute()
  if output.exists():raise FileExistsError(output)
  profile=None

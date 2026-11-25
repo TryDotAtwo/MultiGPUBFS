@@ -56,7 +56,7 @@ def _native_artifact_hashes(native,env):
  dependency=_dependency_identity(native,env)
  return {'native':_file_digest(native),'cuda':dependency['cuda_library_sha256'] if dependency else None}
 
-def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,shards,autotune,batch=None,path_targets=None,path_bidirectional=False,path_window=None,path_max_depth=None,cold_geometry=None):
+def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,shards,autotune,batch=None,path_targets=None,path_bidirectional=False,path_window=None,path_max_depth=None):
  from .launch import (_PACKET_ADDR,_PACKET_RING,_PACKET_RX,_PATH_COMPACT,_PATH_PACKET_ENV,
                       _PATH_SEGMENTED_NEAREST,_PATH_SEGMENTED_WINDOW,_compact_path_env,_rank_launch_config,
                       _receipt,_with_packet_job_token)
@@ -87,7 +87,6 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
    temporary=Path(directory);definition=temporary/'graph.json';definition.write_text(graph.to_json())
    identity={'graph':digest,'world':world,'capacity':capacity,'seconds':max_seconds,'shards':shards,'autotune':autotune,'transport':native_env.get('MGBFS_GENERIC_TRANSPORT'),'candidate_order':native_env.get('MGBFS_GENERIC_SORT'),'history_algorithm':native_env.get('MGBFS_GENERIC_HISTORY','hash'),'owner_lanes':native_env.get('MGBFS_GENERIC_OWNER_LANES','1'),'generator_backend':native_env.get('MGBFS_GENERIC_GENERATOR','cuda'),'gemm_variant':native_env.get('MGBFS_GEMM_VARIANT','auto'),**_native_artifact_hashes(native,native_env)}
    identity['batch']=batch
-   identity['cold_geometry']=cold_geometry
    if path_targets is not None:
     identity['path_bidirectional']=path_bidirectional
     identity['path_window']=path_window
@@ -165,8 +164,6 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     phase_env=_phase_environment(native_env,transport,order,history,lanes,generator)
     inventory=inventories(label)
     config=admit(label,inventory,count,requested,batch if label=='production' else None,transport=transport,order=order,history=history,lanes=lanes,generator=generator)
-    if label=='production' and cold_geometry is not None and config['plan']['batch']>cold_geometry['source_batch_cap']:
-     config=admit(label+'-startup-batch',inventory,count,requested,cold_geometry['source_batch_cap'],transport=transport,order=order,history=history,lanes=lanes,generator=generator)
     if batch_fraction!=1.0:config=admit(label+'-batch',inventory,count,requested,max(1,int(config['plan']['batch']*batch_fraction)),transport=transport,order=order,history=history,lanes=lanes,generator=generator)
     if rank==0:
      config=_rank_launch_config(
@@ -280,8 +277,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     if rank==0:
      from .shard_policy import choose_segmented_shards
      bitmap=native_env.get('MGBFS_EXPERIMENTAL_BITMAP')=='1'
-     minimum_shards=1 if cold_geometry is None else cold_geometry['minimum_shards']
-     geometry=choose_segmented_shards(graph,baseline,bitmap=bitmap,target_rows=int(native_env['MGBFS_SEGMENT_MAX_ROWS']),env=native_env,minimum_shards=minimum_shards)
+     geometry=choose_segmented_shards(graph,baseline,bitmap=bitmap,target_rows=int(native_env['MGBFS_SEGMENT_MAX_ROWS']),env=native_env)
      store.put('segmented-shards',geometry['target_shards'])
     shards=store.get('segmented-shards')
     while shards>1:
