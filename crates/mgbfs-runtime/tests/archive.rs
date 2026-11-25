@@ -4,22 +4,23 @@ use mgbfs_runtime::archive::{verify, Archive, Extent, StreamExtent};
 fn selected_stream_replaces_only_terminal_prefix_and_omits_hash_plane() {
     let writer = SharedWriter::default();
     let readable = writer.clone();
-    let mut a = Archive::new_selected(StreamExtent::new(writer), u64::MAX, 3, [0;32]).unwrap();
-    a.records_wire(0, 1, &[0,1,2]).unwrap();
+    let mut a = Archive::new_selected(StreamExtent::new(writer), u64::MAX, 3, [0; 32]).unwrap();
+    a.records_wire(0, 1, &[0, 1, 2]).unwrap();
     a.layer_commit(0, 1).unwrap();
-    a.records_wire(1, 1000, &vec![1;3000]).unwrap();
-    a.layer_commit(1,1000).unwrap();
+    a.records_wire(1, 1000, &vec![1; 3000]).unwrap();
+    a.layer_commit(1, 1000).unwrap();
     a.replace_last_layer().unwrap();
-    a.records_wire(1,3000,&vec![2;9000]).unwrap();
-    a.layer_commit(1,3000).unwrap();
+    a.records_wire(1, 3000, &vec![2; 9000]).unwrap();
+    a.layer_commit(1, 3000).unwrap();
     assert!(a.replace_last_layer().is_err());
-    assert!(a.records_wire(2,1,&[0,1,2]).is_err());
+    assert!(a.records_wire(2, 1, &[0, 1, 2]).is_err());
     a.run_commit().unwrap();
-    let bytes=readable.0.lock().unwrap().clone();
-    assert_eq!(&bytes[..8],b"MGBFSAS2");
+    let bytes = readable.0.lock().unwrap().clone();
+    assert_eq!(&bytes[..8], b"MGBFSAS2");
     verify(&bytes).unwrap();
-    assert!(verify(&bytes[..bytes.len()-1]).is_err());
-    let mut damaged=bytes;damaged[150]^=1;
+    assert!(verify(&bytes[..bytes.len() - 1]).is_err());
+    let mut damaged = bytes;
+    damaged[150] ^= 1;
     assert!(verify(&damaged).is_err());
 }
 
@@ -27,11 +28,11 @@ fn selected_stream_replaces_only_terminal_prefix_and_omits_hash_plane() {
 fn selected_empty_rank_and_bounded_intermediate_records() {
     let writer = SharedWriter::default();
     let readable = writer.clone();
-    let mut a = Archive::new_selected(StreamExtent::new(writer), u64::MAX, 3, [0;32]).unwrap();
+    let mut a = Archive::new_selected(StreamExtent::new(writer), u64::MAX, 3, [0; 32]).unwrap();
     assert!(a.replace_last_layer().is_err());
-    assert!(a.records_wire(0,1001,&vec![0;3003]).is_err());
-    a.layer_commit(0,0).unwrap();
-    a.layer_commit(1,0).unwrap();
+    assert!(a.records_wire(0, 1001, &vec![0; 3003]).is_err());
+    a.layer_commit(0, 0).unwrap();
+    a.layer_commit(1, 0).unwrap();
     a.run_commit().unwrap();
     verify(&readable.0.lock().unwrap()).unwrap();
 }
@@ -43,8 +44,10 @@ fn stream_extent_handles_large_orbits_without_physical_reservation() {
     assert_eq!(extent.write_at(0, b"wide").unwrap(), 4);
     assert!(extent.write_at(0, b"repeat").is_err());
     assert!(extent.write_at(u64::MAX, b"overflow").is_err());
-    assert!(mgbfs_runtime::archive::ArchiveRingPlan::reference_extent_bytes(
-        128, u64::MAX, 4096).is_err());
+    assert!(
+        mgbfs_runtime::archive::ArchiveRingPlan::reference_extent_bytes(128, u64::MAX, 4096)
+            .is_err()
+    );
 }
 
 #[test]
@@ -442,12 +445,12 @@ fn capacity_and_record_shape_are_checked_before_writing() {
 
 #[test]
 fn full_state_only_has_no_sample_limit_or_replacement_phase() {
-    let mut a = Archive::new_state_only(Disk::default(), 8192, 3, [0;32]).unwrap();
-    a.records_wire(0, 1001, &vec![1;3003]).unwrap();
-    a.layer_commit(0,1001).unwrap();
+    let mut a = Archive::new_state_only(Disk::default(), 8192, 3, [0; 32]).unwrap();
+    a.records_wire(0, 1001, &vec![1; 3003]).unwrap();
+    a.layer_commit(0, 1001).unwrap();
     assert!(a.replace_last_layer().is_err());
     a.run_commit().unwrap();
     assert_eq!(&a.extent.bytes[..8], b"MGBFSAS3");
     verify(&a.extent.bytes).unwrap();
-    assert_eq!(a.extent.syncs,1);
+    assert_eq!(a.extent.syncs, 1);
 }

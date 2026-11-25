@@ -137,7 +137,9 @@ pub(super) fn finish_window_lineage(
         if path_error.is_none() {
             *path_error = checkpoint.and_then(|check| check().err());
         }
-        let result = tile.readback.finish(lineage, path_error.is_none(), checkpoint);
+        let result = tile
+            .readback
+            .finish(lineage, path_error.is_none(), checkpoint);
         if path_error.is_none() {
             *path_error = result.err();
         }

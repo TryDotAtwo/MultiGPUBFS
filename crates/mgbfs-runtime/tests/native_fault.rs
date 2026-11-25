@@ -38,7 +38,9 @@ fn separate_threads_have_separate_call_context() {
         native_fault::reset(Some(7), Some(7));
         native_fault::layer(9, 8);
         assert_eq!(native_fault::snapshot()["layer"], 9);
-    }).join().unwrap();
+    })
+    .join()
+    .unwrap();
     assert_eq!(native_fault::snapshot()["layer"], 4);
     assert_eq!(native_fault::snapshot()["rank"], 1);
 }
@@ -57,7 +59,10 @@ fn teardown_does_not_replace_the_primary_native_error() {
     let snapshot = native_fault::snapshot();
     assert_eq!(snapshot["native_error"], first);
     assert_eq!(snapshot["native_secondary_error_count"], 32);
-    assert_eq!(snapshot["native_last_error"]["call"], "cudaDeviceSynchronize");
+    assert_eq!(
+        snapshot["native_last_error"]["call"],
+        "cudaDeviceSynchronize"
+    );
     native_fault::begin("cleanup_success", "cleanup.rs", 40);
     assert!(native_fault::finish(0).is_ok());
     assert_eq!(native_fault::snapshot()["native_error"], first);

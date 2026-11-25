@@ -60,7 +60,10 @@ impl OwnerRow {
         if owner >= world {
             return Err("NATIVE_PATH_PARENT_LINK".into());
         }
-        Ok(Self { owner, row: row as u64 })
+        Ok(Self {
+            owner,
+            row: row as u64,
+        })
     }
 }
 

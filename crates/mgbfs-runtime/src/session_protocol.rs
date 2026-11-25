@@ -12,12 +12,17 @@ impl Job {
         if v["schema"] != 1 || v["sequence"].as_u64() != Some(sequence) {
             return Err("SESSION_JOB_SEQUENCE".into());
         }
-        let args: Vec<String> = serde_json::from_value(v["args"].clone()).map_err(|e| e.to_string())?;
+        let args: Vec<String> =
+            serde_json::from_value(v["args"].clone()).map_err(|e| e.to_string())?;
         if args.len() != 6 || !args[1].starts_with("lrx") {
             return Err("SESSION_JOB_ARGS".into());
         }
-        let env: BTreeMap<String, String> = serde_json::from_value(v["env"].clone()).map_err(|e| e.to_string())?;
-        if env.keys().any(|k| !k.starts_with("MGBFS_") && !k.starts_with("NCCL_")) {
+        let env: BTreeMap<String, String> =
+            serde_json::from_value(v["env"].clone()).map_err(|e| e.to_string())?;
+        if env
+            .keys()
+            .any(|k| !k.starts_with("MGBFS_") && !k.starts_with("NCCL_"))
+        {
             return Err("SESSION_JOB_ENV".into());
         }
         Ok(Self { args, env })
@@ -28,10 +33,15 @@ impl Job {
 pub fn expected_plan_rejection(command: Option<&str>, error: &str, native_failed: bool) -> bool {
     !native_failed
         && matches!(command, Some("graph-plan") | Some("graph-local-plan"))
-        && matches!(error, "REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION"
-            | "REQUESTED_CAPACITY_EXCEEDS_ADMISSION" | "GEMM_BATCH_EXCEEDS_ADMISSION"
-            | "GENERIC_DISTRIBUTED_HEADROOM" | "GENERIC_DISTRIBUTED_NO_CAPACITY"
-            | "NATIVE_PATH_WORKSPACE_HEADROOM")
+        && matches!(
+            error,
+            "REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION"
+                | "REQUESTED_CAPACITY_EXCEEDS_ADMISSION"
+                | "GEMM_BATCH_EXCEEDS_ADMISSION"
+                | "GENERIC_DISTRIBUTED_HEADROOM"
+                | "GENERIC_DISTRIBUTED_NO_CAPACITY"
+                | "NATIVE_PATH_WORKSPACE_HEADROOM"
+        )
 }
 
 #[cfg(test)]
@@ -42,33 +52,71 @@ mod tests {
         let valid = br#"{"schema":1,"sequence":3,"args":["bench","lrx17r1","2","b","a","o"],"env":{"MGBFS_MEMORY_QUERY":"1"}}"#;
         assert!(Job::parse(valid, 3).is_ok());
         assert!(Job::parse(valid, 4).is_err());
-        let invalid = String::from_utf8(valid.to_vec()).unwrap().replace("MGBFS_MEMORY_QUERY", "RANK");
+        let invalid = String::from_utf8(valid.to_vec())
+            .unwrap()
+            .replace("MGBFS_MEMORY_QUERY", "RANK");
         assert!(Job::parse(invalid.as_bytes(), 3).is_err());
     }
     #[test]
     fn expected_resource_plan_refusals_keep_a_healthy_session() {
         for command in ["graph-plan", "graph-local-plan"] {
-            for error in ["REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION", "REQUESTED_CAPACITY_EXCEEDS_ADMISSION", "GEMM_BATCH_EXCEEDS_ADMISSION", "GENERIC_DISTRIBUTED_HEADROOM", "GENERIC_DISTRIBUTED_NO_CAPACITY", "NATIVE_PATH_WORKSPACE_HEADROOM"] {
-                assert!(expected_plan_rejection(Some(command), error, false), "{command}: {error}");
+            for error in [
+                "REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION",
+                "REQUESTED_CAPACITY_EXCEEDS_ADMISSION",
+                "GEMM_BATCH_EXCEEDS_ADMISSION",
+                "GENERIC_DISTRIBUTED_HEADROOM",
+                "GENERIC_DISTRIBUTED_NO_CAPACITY",
+                "NATIVE_PATH_WORKSPACE_HEADROOM",
+            ] {
+                assert!(
+                    expected_plan_rejection(Some(command), error, false),
+                    "{command}: {error}"
+                );
             }
         }
     }
     #[test]
     fn capacity_error_from_bfs_or_nonplan_command_is_fatal() {
-        for command in [None, Some("graph-rank"), Some("bench"), Some("inventory"), Some("release-memory"), Some("graph-plan-extra")] {
-            assert!(!expected_plan_rejection(command, "REQUESTED_CAPACITY_EXCEEDS_ADMISSION", false));
+        for command in [
+            None,
+            Some("graph-rank"),
+            Some("bench"),
+            Some("inventory"),
+            Some("release-memory"),
+            Some("graph-plan-extra"),
+        ] {
+            assert!(!expected_plan_rejection(
+                command,
+                "REQUESTED_CAPACITY_EXCEEDS_ADMISSION",
+                false
+            ));
         }
     }
     #[test]
     fn real_native_fault_always_invalidates_session_even_for_a_plan() {
-        assert!(!expected_plan_rejection(Some("graph-plan"), "REQUESTED_CAPACITY_EXCEEDS_ADMISSION", true));
-        assert!(!expected_plan_rejection(Some("graph-local-plan"), "GENERIC_CUDA_999", false));
+        assert!(!expected_plan_rejection(
+            Some("graph-plan"),
+            "REQUESTED_CAPACITY_EXCEEDS_ADMISSION",
+            true
+        ));
+        assert!(!expected_plan_rejection(
+            Some("graph-local-plan"),
+            "GENERIC_CUDA_999",
+            false
+        ));
     }
     #[test]
     fn unknown_or_decorated_plan_errors_are_not_recoverable() {
-        for error in ["", "unknown", "GENERIC_CUDA_700", "GENERIC_CUDA_999", "REQUESTED_CAPACITY_EXCEEDS_ADMISSION later CUDA failure", "prefix REQUESTED_CAPACITY_EXCEEDS_ADMISSION", "SESSION_JOB_SEQUENCE"] {
+        for error in [
+            "",
+            "unknown",
+            "GENERIC_CUDA_700",
+            "GENERIC_CUDA_999",
+            "REQUESTED_CAPACITY_EXCEEDS_ADMISSION later CUDA failure",
+            "prefix REQUESTED_CAPACITY_EXCEEDS_ADMISSION",
+            "SESSION_JOB_SEQUENCE",
+        ] {
             assert!(!expected_plan_rejection(Some("graph-plan"), error, false));
         }
     }
-
 }

@@ -846,16 +846,23 @@ fn run_pass(
         }
         let description=format!("distributed-native-ring-v2;{group};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_ring={declared_future};global_capacity={};global_ring={};map={rank_map:?};seed=0x{seed_hex};archive_width={archive_width}", capacity_plan.global_records, future_plan.global_records);
         let description = format!("{description};compact_states={compact_states}");
-    let description = format!("{description};reference_selection={selection:?}");
-    let archive_selection = std::env::var("MGBFS_ARCHIVE_SELECTION").ok();
-    if archive_selection.as_deref().is_some_and(|mode| mode != "last_complete_small_1000" && mode != "last_complete_prefix_1000" && mode != "all_states") {
-        return Err("ENV_MGBFS_ARCHIVE_SELECTION".into());
-    }
-    if archive_selection.is_some() && !compact_states {
-        return Err("SELECTED_ARCHIVE_REQUIRES_COMPACT_STATES".into());
-    }
-    let description = format!("{description};archive_selection={archive_selection:?}");
-    let description = format!("{description};exact_packed_keys={:?}",std::env::var("MGBFS_EXACT_PACKED_KEYS").ok());
+        let description = format!("{description};reference_selection={selection:?}");
+        let archive_selection = std::env::var("MGBFS_ARCHIVE_SELECTION").ok();
+        if archive_selection.as_deref().is_some_and(|mode| {
+            mode != "last_complete_small_1000"
+                && mode != "last_complete_prefix_1000"
+                && mode != "all_states"
+        }) {
+            return Err("ENV_MGBFS_ARCHIVE_SELECTION".into());
+        }
+        if archive_selection.is_some() && !compact_states {
+            return Err("SELECTED_ARCHIVE_REQUIRES_COMPACT_STATES".into());
+        }
+        let description = format!("{description};archive_selection={archive_selection:?}");
+        let description = format!(
+            "{description};exact_packed_keys={:?}",
+            std::env::var("MGBFS_EXACT_PACKED_KEYS").ok()
+        );
 
         let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
         let archive_path = format!("{}-rank-{rank}.mgbfsar1", args[4]);
@@ -895,7 +902,9 @@ fn run_pass(
                 }
                 Err(_) => return Err("ENV_MGBFS_EPOCH_WINDOW".into()),
             },
-            untouched_vram_reserve: crate::reference_launch::vram_reserve_bytes(std::env::var("MGBFS_VRAM_RESERVE_BYTES").ok().as_deref())?,
+            untouched_vram_reserve: crate::reference_launch::vram_reserve_bytes(
+                std::env::var("MGBFS_VRAM_RESERVE_BYTES").ok().as_deref(),
+            )?,
             rank,
             world,
             logical_owner_to_rank: rank_map,
@@ -974,7 +983,9 @@ fn run_pass(
             archive_rows,
             archive_slots,
             stream_archive,
-            calibration_layers: crate::reference_launch::calibration_layers(std::env::var("MGBFS_CALIBRATION_LAYERS").ok().as_deref())?,
+            calibration_layers: crate::reference_launch::calibration_layers(
+                std::env::var("MGBFS_CALIBRATION_LAYERS").ok().as_deref(),
+            )?,
             cfg,
             bootstrap_digest,
         })
@@ -1090,7 +1101,7 @@ fn run_pass(
     }
     let mut archive = archive_setup?;
     let pinned = archive.as_ref().map_or(0, |a| a.pinned_bytes());
-    #[cfg(target_os="linux")]
+    #[cfg(target_os = "linux")]
     let _search_signals = crate::bootstrap::SearchSignals::install()?;
     let sideband = control_group
         .start_search_sideband_with_report(Duration::from_secs(7200), search_failure)?;
@@ -1185,95 +1196,153 @@ fn run_pass(
         if test_fault_rank("MGBFS_TEST_MATERIALIZER_REGENERATE_FATAL_RANK", rank, world)? {
             crate::distributed_native::inject_materializer_local_error_once_for_test(true);
         }
-    let allocated = used()?;
-    let setup_seconds = setup.elapsed().as_secs_f64();
-    let trace = std::env::var_os("MGBFS_TRACE_DEPTHS").is_some();
-    let profile_window = if is_measure { profiler_window_start()? } else { false };
-    crate::job_phase::set("bfs")?;
-    let start = Instant::now();
-    let mut layers = Vec::new();
-    let mut times = Vec::new();
-    let mut calibration_stopped = false;
-    let mut job_stop_reason=None::<String>;
-    let job_seconds=std::env::var("MGBFS_JOB_BFS_SECONDS").ok().map(|v|v.parse::<f64>().map_err(|_|"JOB_BFS_SECONDS")).transpose()?;
-    if job_seconds.is_some_and(|v|!v.is_finite()||v<0.0){return Err("JOB_BFS_SECONDS".into());}
-    let job_seconds=job_seconds.filter(|v|*v>0.0);
-    let controlled=job_seconds.is_some()||std::env::var_os("MGBFS_JOB_CANCEL_PATH").is_some();
-    loop {
-        let tick = Instant::now();
-        let depth = bfs.depth();
-        let count = bfs.frontier_len();
-        layers.push(count);
-        if trace {
-            let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                .map_err(|e| e.to_string())?.as_secs_f64();
-            std::io::Write::write_all(&mut std::io::stderr(),
+        let allocated = used()?;
+        let setup_seconds = setup.elapsed().as_secs_f64();
+        let trace = std::env::var_os("MGBFS_TRACE_DEPTHS").is_some();
+        let profile_window = if is_measure {
+            profiler_window_start()?
+        } else {
+            false
+        };
+        crate::job_phase::set("bfs")?;
+        let start = Instant::now();
+        let mut layers = Vec::new();
+        let mut times = Vec::new();
+        let mut calibration_stopped = false;
+        let mut job_stop_reason = None::<String>;
+        let job_seconds = std::env::var("MGBFS_JOB_BFS_SECONDS")
+            .ok()
+            .map(|v| v.parse::<f64>().map_err(|_| "JOB_BFS_SECONDS"))
+            .transpose()?;
+        if job_seconds.is_some_and(|v| !v.is_finite() || v < 0.0) {
+            return Err("JOB_BFS_SECONDS".into());
+        }
+        let job_seconds = job_seconds.filter(|v| *v > 0.0);
+        let controlled =
+            job_seconds.is_some() || std::env::var_os("MGBFS_JOB_CANCEL_PATH").is_some();
+        loop {
+            let tick = Instant::now();
+            let depth = bfs.depth();
+            let count = bfs.frontier_len();
+            layers.push(count);
+            if trace {
+                let unix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| e.to_string())?
+                    .as_secs_f64();
+                std::io::Write::write_all(&mut std::io::stderr(),
                 format!("MGBFS_DEPTH_BEGIN rank={rank} depth={depth} count={count} unix={unix:.6}\n").as_bytes())
                 .map_err(|e| e.to_string())?;
-        }
-        if controlled {
-            let local=if crate::job_phase::cancelled(){2}else if job_seconds.is_some_and(|v|start.elapsed().as_secs_f64()>=v){1}else{0};
-            let stop=bfs.boundary_job_stop(local)?;
-            if stop!=0 {
-                if let Some(archive)=archive.as_mut(){if archive.selected_whole||archive.selected_prefix{bfs.archive_selected_terminal_snapshot(archive)?;}}
-                job_stop_reason=Some(if stop==2{"job cancelled"}else{"BFS deadline"}.to_owned());
+            }
+            if controlled {
+                let local = if crate::job_phase::cancelled() {
+                    2
+                } else if job_seconds.is_some_and(|v| start.elapsed().as_secs_f64() >= v) {
+                    1
+                } else {
+                    0
+                };
+                let stop = bfs.boundary_job_stop(local)?;
+                if stop != 0 {
+                    if let Some(archive) = archive.as_mut() {
+                        if archive.selected_whole || archive.selected_prefix {
+                            bfs.archive_selected_terminal_snapshot(archive)?;
+                        }
+                    }
+                    job_stop_reason = Some(
+                        if stop == 2 {
+                            "job cancelled"
+                        } else {
+                            "BFS deadline"
+                        }
+                        .to_owned(),
+                    );
+                    break;
+                }
+            }
+            let advance = if sideband.cancel_requested() {
+                if let Some(archive) = archive.as_mut() {
+                    if archive.selected_whole || archive.selected_prefix {
+                        bfs.archive_selected_terminal_snapshot(archive)?;
+                    }
+                }
+                Err("REMOTE_SEARCH_CANCELLED".into())
+            } else if let Some(archive) = archive.as_mut() {
+                if archive.selected {
+                    bfs.advance_selected(archive)
+                } else {
+                    bfs.advance_archived(archive)
+                }
+            } else {
+                bfs.advance()
+            };
+            // Publish a local search failure before `bfs` is dropped and its
+            // communicator is aborted. Peers need the sideband cancellation even
+            // when their own GPU path has not yet observed the NCCL error.
+            if let Err(error) = &advance {
+                if archive
+                    .as_ref()
+                    .is_some_and(|a| a.selected_whole || a.selected_prefix)
+                {
+                    let unix = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_err(|e| e.to_string())?
+                        .as_secs_f64();
+                    // Keep failure-boundary metadata atomic on the shared pipe.
+                    std::io::Write::write_all(&mut std::io::stderr(),format!(
+                    "MGBFS_DEPTH_END rank={rank} depth={depth} seconds={} next={} alive=false unix={unix:.6}\n",tick.elapsed().as_secs_f64(),bfs.frontier_len()).as_bytes())
+                    .map_err(|e|e.to_string())?;
+                    if let Some(a) = archive.take() {
+                        if let Err(drain) = a.finish() {
+                            eprintln!("MGBFS_ARCHIVE_SNAPSHOT_ERROR {drain}");
+                        }
+                    }
+                }
+                sideband.report_failure();
+                eprintln!("MGBFS_SELECTED_STOP {error}");
+            }
+            let alive = advance?;
+            if trace && archive_enabled {
+                eprintln!("MGBFS_ARCHIVE_SUBMITTED rank={rank} depth={depth} count={count}");
+            }
+            let elapsed = tick.elapsed().as_secs_f64();
+            times.push(elapsed);
+            if trace {
+                let unix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| e.to_string())?
+                    .as_secs_f64();
+                std::io::Write::write_all(&mut std::io::stderr(),
+                format!("MGBFS_DEPTH_END rank={rank} depth={depth} seconds={elapsed:.6} next={} alive={alive} unix={unix:.6}\n",bfs.frontier_len()).as_bytes())
+                .map_err(|e| e.to_string())?;
+            }
+            if !alive {
+                break;
+            }
+            if calibration_layers.is_some_and(|limit| layers.len() >= limit as usize) {
+                calibration_stopped = true;
                 break;
             }
         }
-        let advance = if sideband.cancel_requested() {
-            if let Some(archive)=archive.as_mut(){
-                if archive.selected_whole || archive.selected_prefix {bfs.archive_selected_terminal_snapshot(archive)?;}
-            }
-            Err("REMOTE_SEARCH_CANCELLED".into())
-        } else if let Some(archive) = archive.as_mut() {
-            if archive.selected { bfs.advance_selected(archive) }
-            else { bfs.advance_archived(archive) }
-        } else {
-            bfs.advance()
-        };
-        // Publish a local search failure before `bfs` is dropped and its
-        // communicator is aborted. Peers need the sideband cancellation even
-        // when their own GPU path has not yet observed the NCCL error.
-        if let Err(error) = &advance {
-            if archive.as_ref().is_some_and(|a|a.selected_whole || a.selected_prefix) {
-                let unix=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|e|e.to_string())?.as_secs_f64();
-                // Keep failure-boundary metadata atomic on the shared pipe.
-                std::io::Write::write_all(&mut std::io::stderr(),format!(
-                    "MGBFS_DEPTH_END rank={rank} depth={depth} seconds={} next={} alive=false unix={unix:.6}\n",tick.elapsed().as_secs_f64(),bfs.frontier_len()).as_bytes())
-                    .map_err(|e|e.to_string())?;
-                if let Some(a)=archive.take(){if let Err(drain)=a.finish(){eprintln!("MGBFS_ARCHIVE_SNAPSHOT_ERROR {drain}");}}
-            }
-            sideband.report_failure();
-            eprintln!("MGBFS_SELECTED_STOP {error}");
-        }
-        let alive = advance?;
-        if trace && archive_enabled {
-            eprintln!("MGBFS_ARCHIVE_SUBMITTED rank={rank} depth={depth} count={count}");
-        }
-        let elapsed = tick.elapsed().as_secs_f64();
-        times.push(elapsed);
-        if trace {
-            let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                .map_err(|e| e.to_string())?.as_secs_f64();
-            std::io::Write::write_all(&mut std::io::stderr(),
-                format!("MGBFS_DEPTH_END rank={rank} depth={depth} seconds={elapsed:.6} next={} alive={alive} unix={unix:.6}\n",bfs.frontier_len()).as_bytes())
-                .map_err(|e| e.to_string())?;
-        }
-        if !alive {
-            break;
-        }
-        if calibration_layers.is_some_and(|limit| layers.len() >= limit as usize) {
-            calibration_stopped = true;
-            break;
-        }
-    }
-    let search = start.elapsed().as_secs_f64();
-    profiler_window_stop(profile_window)?;
-    Ok((bfs, allocated, setup_seconds, search, layers, times, start, calibration_stopped, job_stop_reason))
+        let search = start.elapsed().as_secs_f64();
+        profiler_window_stop(profile_window)?;
+        Ok((
+            bfs,
+            allocated,
+            setup_seconds,
+            search,
+            layers,
+            times,
+            start,
+            calibration_stopped,
+            job_stop_reason,
+        ))
     })();
     // Query-only admission is a successful control outcome, not peer cancellation.
-    let query_only = search_result.as_ref().err().is_some_and(|e| e == "MEMORY_QUERY_DONE");
+    let query_only = search_result
+        .as_ref()
+        .err()
+        .is_some_and(|e| e == "MEMORY_QUERY_DONE");
     if search_result.is_err() && !query_only {
         sideband.report_failure();
         // The failed closure no longer owns a BFS: its abort/drop has returned.
@@ -1303,7 +1372,17 @@ fn run_pass(
             .err()
             .unwrap_or_else(|| "REMOTE_SEARCH_FATAL".into()));
     }
-    let (mut bfs, allocated, setup_seconds, search, layers, times, start, calibration_stopped, job_stop_reason) = search_result?;
+    let (
+        mut bfs,
+        allocated,
+        setup_seconds,
+        search,
+        layers,
+        times,
+        start,
+        calibration_stopped,
+        job_stop_reason,
+    ) = search_result?;
     crate::job_phase::set("retiring")?;
     let archive_ram_ring = archive.as_ref().map(PinnedArchive::ring_stats);
     let archive_commit = archive.take().map_or(Ok(()), PinnedArchive::finish);
@@ -1358,31 +1437,43 @@ fn run_pass(
             let mut value: serde_json::Value =
                 serde_json::from_str(&record).map_err(|e| format!("RECORD_JSON: {e}"))?;
             value["archive_ram_ring"] = serde_json::json!(archive_ram_ring);
-            if let Some([maximum,capacity,slots]) = bfs.shard_ab_geometry() {
+            if let Some([maximum, capacity, slots]) = bfs.shard_ab_geometry() {
                 value["backend"] = serde_json::json!("native_shard_ab_hash_pipeline_v1");
                 value["shard_ab"] = serde_json::json!({"maximum_shards":maximum,"buffer_capacity":capacity,"active_job_slots":slots});
             }
             value["batch_graph"] = serde_json::json!(bfs.batch_graph_stats()?);
             value["calibration_layers"] = serde_json::json!(calibration_layers);
-            if let Some(reason)=&job_stop_reason {
-                value["status"]=serde_json::json!("INCOMPLETE");value["stop_reason"]=serde_json::json!(reason);
-                value["last_completed_layer"]=serde_json::json!(layers.len()-1);value["search_prefix_seconds"]=serde_json::json!(search);
-                value.as_object_mut().ok_or("RECORD_JSON_OBJECT")?.remove("search_complete_seconds");
+            if let Some(reason) = &job_stop_reason {
+                value["status"] = serde_json::json!("INCOMPLETE");
+                value["stop_reason"] = serde_json::json!(reason);
+                value["last_completed_layer"] = serde_json::json!(layers.len() - 1);
+                value["search_prefix_seconds"] = serde_json::json!(search);
+                value
+                    .as_object_mut()
+                    .ok_or("RECORD_JSON_OBJECT")?
+                    .remove("search_complete_seconds");
             }
             if calibration_stopped {
                 value["status"] = serde_json::json!("INCOMPLETE");
                 value["stop_reason"] = serde_json::json!("calibration layer limit");
-                value["last_completed_layer"] = serde_json::json!(layers.len()-1);
+                value["last_completed_layer"] = serde_json::json!(layers.len() - 1);
                 value["search_prefix_seconds"] = serde_json::json!(search);
-                value.as_object_mut().ok_or("RECORD_JSON_OBJECT")?.remove("search_complete_seconds");
+                value
+                    .as_object_mut()
+                    .ok_or("RECORD_JSON_OBJECT")?
+                    .remove("search_complete_seconds");
             }
-            if matches!(archive_selection.as_deref(),Some("last_complete_small_1000" | "last_complete_prefix_1000")) {
-                value["output_contract"] = serde_json::json!("selected_states_and_all_layer_counts");
+            if matches!(
+                archive_selection.as_deref(),
+                Some("last_complete_small_1000" | "last_complete_prefix_1000")
+            ) {
+                value["output_contract"] =
+                    serde_json::json!("selected_states_and_all_layer_counts");
                 value["archive_wire_format"] = serde_json::json!("MGBFSAS2");
                 value["archive_prefix_limit_per_rank"] = serde_json::json!(1000);
                 value["archive_per_state_hashes"] = serde_json::json!(false);
             }
-            if archive_selection.as_deref()==Some("all_states") {
+            if archive_selection.as_deref() == Some("all_states") {
                 value["archive_wire_format"] = serde_json::json!("MGBFSAS3");
                 value["archive_per_state_hashes"] = serde_json::json!(false);
             }
@@ -1428,7 +1519,14 @@ fn run_pass(
             value["device_allocation_plan"] =
                 crate::distributed_memory::allocation_report(bfs.owned_memory());
             value["hash_seed_hex"] = serde_json::json!(seed_hex);
-            value["state_key_codec"] = serde_json::json!(if std::env::var("MGBFS_EXACT_PACKED_KEYS").ok().as_deref()==Some("1"){"lossless_bitpack128_feistel_v1"}else{"affine_fingerprint128_v1"});
+            value["state_key_codec"] =
+                serde_json::json!(if std::env::var("MGBFS_EXACT_PACKED_KEYS").ok().as_deref()
+                    == Some("1")
+                {
+                    "lossless_bitpack128_feistel_v1"
+                } else {
+                    "affine_fingerprint128_v1"
+                });
             value["cuda_loading"] = crate::cuda_loading::evidence();
             value["bootstrap_digest"] = serde_json::json!(bootstrap_digest);
             value["logical_owner_to_rank"] = serde_json::json!(cfg.logical_owner_to_rank);
@@ -1438,9 +1536,10 @@ fn run_pass(
                 value["graph_kind"] = serde_json::json!("lrx_multiset_schreier");
                 value["start_state"] = serde_json::json!(word.start());
                 value["expected_unique_states"] = serde_json::json!(word.order());
-                value["expected_unique_states_u64_is_bound"] = serde_json::json!(!word.order_fits_u64());
-            value["expected_unique_states_words_le"] = serde_json::json!(word.order_words());
-            value["generators"] = serde_json::json!(["L", "R", "X"]);
+                value["expected_unique_states_u64_is_bound"] =
+                    serde_json::json!(!word.order_fits_u64());
+                value["expected_unique_states_words_le"] = serde_json::json!(word.order_words());
+                value["generators"] = serde_json::json!(["L", "R", "X"]);
             }
             value["cuda_memory_sampling"] = serde_json::json!("setup_and_final_only_not_full_peak");
             value["dense_lookahead_batches"] = serde_json::json!(bfs.dense_lookahead_batches());
@@ -1470,7 +1569,13 @@ fn run_pass(
             {
                 value["backend"] = serde_json::json!(label);
             }
-            if matches!(archive_selection.as_deref(),Some("last_complete_small_1000" | "last_complete_prefix_1000")) { value["output_contract"] = serde_json::json!("selected_states_and_all_layer_counts"); }
+            if matches!(
+                archive_selection.as_deref(),
+                Some("last_complete_small_1000" | "last_complete_prefix_1000")
+            ) {
+                value["output_contract"] =
+                    serde_json::json!("selected_states_and_all_layer_counts");
+            }
             serde_json::to_vec(&value).map_err(|e| format!("RECORD_JSON: {e}"))?
         })?;
         if !is_measure && archive_enabled {
@@ -1492,15 +1597,26 @@ fn run_pass(
     }
     output?;
     let publication = if rank == 0 && is_measure {
-        if let Some(reason)=&job_stop_reason {
-            crate::group_commit::write_job_stop_commit(Path::new(&args[5]),world,bootstrap_digest,reason)
+        if let Some(reason) = &job_stop_reason {
+            crate::group_commit::write_job_stop_commit(
+                Path::new(&args[5]),
+                world,
+                bootstrap_digest,
+                reason,
+            )
         } else if calibration_stopped {
-            crate::group_commit::write_calibration_commit(Path::new(&args[5]), world,
-                bootstrap_digest,calibration_layers.ok_or("CALIBRATION_LIMIT_MISSING")?)
+            crate::group_commit::write_calibration_commit(
+                Path::new(&args[5]),
+                world,
+                bootstrap_digest,
+                calibration_layers.ok_or("CALIBRATION_LIMIT_MISSING")?,
+            )
         } else {
             crate::group_commit::write_group_commit(Path::new(&args[5]), world, bootstrap_digest)
         }
-    } else { Ok(()) };
+    } else {
+        Ok(())
+    };
     if control_group.agree_boundary(
         crate::bootstrap::BoundaryPhase::GroupPublished,
         publication.is_err(),
@@ -1514,7 +1630,8 @@ fn run_pass(
     if crate::session_cache::enabled() {
         let parked = bfs.session_parkable();
         let rejected = control_group.agree_boundary(
-            crate::bootstrap::BoundaryPhase::SessionReuse, !parked,
+            crate::bootstrap::BoundaryPhase::SessionReuse,
+            !parked,
             Duration::from_secs(60),
         )?;
         crate::session_cache::permit_comm(!rejected);

@@ -42,7 +42,7 @@ fn moves_act_on_positions_and_preserve_repetitions() {
 
 #[test]
 fn malformed_degree_multiplicity_and_overflow_are_rejected() {
-    for (n, repeated) in [(0,4), (3,4), (15,0), (257,4)] {
+    for (n, repeated) in [(0, 4), (3, 4), (15, 0), (257, 4)] {
         assert!(LrxMultiset::new(n, repeated).is_err());
     }
     assert_eq!(
@@ -76,15 +76,25 @@ fn reference_label_and_generator_matrices_preserve_the_word_action() {
 
 #[test]
 fn wide_orbit_is_exact_in_aligned_u64_words() {
-    let graph = LrxMultiset::new(27,12).unwrap();
+    let graph = LrxMultiset::new(27, 12).unwrap();
     let expected = (13u128..=27).product::<u128>();
-    assert_eq!(graph.order_words(), &[expected as u64, (expected >> 64) as u64]);
+    assert_eq!(
+        graph.order_words(),
+        &[expected as u64, (expected >> 64) as u64]
+    );
     assert!(!graph.order_fits_u64());
     assert_eq!(graph.order(), u64::MAX);
-    let easy = LrxMultiset::new(128,127).unwrap();
+    let easy = LrxMultiset::new(128, 127).unwrap();
     assert_eq!(easy.order_words(), &[128]);
-    assert_eq!(easy.exact_layers(128).unwrap().iter().map(Vec::len).sum::<usize>(),128);
-    assert!(LrxMultiset::new(128,1).unwrap().order_words().len()>2);
+    assert_eq!(
+        easy.exact_layers(128)
+            .unwrap()
+            .iter()
+            .map(Vec::len)
+            .sum::<usize>(),
+        128
+    );
+    assert!(LrxMultiset::new(128, 1).unwrap().order_words().len() > 2);
 }
 
 #[test]
@@ -96,9 +106,19 @@ fn wide_word_orbit_does_not_require_full_symmetric_order() {
     action.validate().unwrap();
     assert_eq!(action.expected_max_unique_states, 32);
     for generator in 0..3 {
-        let product: Vec<u8> = action.generators[generator].chunks(32)
-            .map(|row| row.iter().zip(graph.start()).map(|(&a,&b)| a*b).sum()).collect();
+        let product: Vec<u8> = action.generators[generator]
+            .chunks(32)
+            .map(|row| row.iter().zip(graph.start()).map(|(&a, &b)| a * b).sum())
+            .collect();
         assert_eq!(product, graph.successor(graph.start(), generator).unwrap());
     }
-    assert_eq!(graph.exact_layers(32).unwrap().iter().map(Vec::len).sum::<usize>(), 32);
+    assert_eq!(
+        graph
+            .exact_layers(32)
+            .unwrap()
+            .iter()
+            .map(Vec::len)
+            .sum::<usize>(),
+        32
+    );
 }

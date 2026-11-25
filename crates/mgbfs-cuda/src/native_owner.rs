@@ -549,7 +549,11 @@ mod calls {
             stream: *mut c_void,
         ) -> i32;
         pub fn cudaHostAlloc(out: *mut *mut c_void, bytes: usize, flags: u32) -> i32;
-        pub fn cudaHostGetDevicePointer(out: *mut *mut c_void, host: *mut c_void, flags: u32) -> i32;
+        pub fn cudaHostGetDevicePointer(
+            out: *mut *mut c_void,
+            host: *mut c_void,
+            flags: u32,
+        ) -> i32;
         pub fn cudaMemcpy2DAsync(
             dst: *mut c_void,
             dpitch: usize,

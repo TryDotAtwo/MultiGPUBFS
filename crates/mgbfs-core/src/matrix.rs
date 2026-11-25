@@ -178,7 +178,10 @@ impl MatrixGroup {
     }
     /// Internal generator description for a specified position-action orbit.
     /// Its bound belongs to the active word orbit, not the full symmetric group.
-    pub(crate) fn permutation_position_action(n: usize, expected_max_unique_states: u64) -> Result<Self> {
+    pub(crate) fn permutation_position_action(
+        n: usize,
+        expected_max_unique_states: u64,
+    ) -> Result<Self> {
         if n < 2 || n.checked_mul(n).unwrap_or(usize::MAX) > 33025 {
             return Err("SYMMETRIC_DEGREE".into());
         }

@@ -71,7 +71,8 @@ fn target_lookup_kernel() -> Option<TargetLookupFn> {
             b"mgbfs_path_find_targets_v1\0".as_ptr().cast(),
         )
     };
-    (!symbol.is_null()).then(|| unsafe { std::mem::transmute::<*mut c_void, TargetLookupFn>(symbol) })
+    (!symbol.is_null())
+        .then(|| unsafe { std::mem::transmute::<*mut c_void, TargetLookupFn>(symbol) })
 }
 
 fn scanner() -> Option<ScanFn> {
@@ -320,7 +321,11 @@ impl QueryGpu {
                 m: bfs.cols,
                 generators: bfs.generators,
                 count: (count - offset).min(batch),
-                target_count: if transitions { target_count } else { best_label },
+                target_count: if transitions {
+                    target_count
+                } else {
+                    best_label
+                },
                 transitions: u32::from(transitions),
                 begin: u64::from(start) + u64::from(offset),
                 stride: u64::from(bfs.arena_stride),
@@ -344,7 +349,11 @@ impl QueryGpu {
                 } else {
                     (best % u64::from(scan.count), best / u64::from(scan.count))
                 };
-                let label_count = if transitions { labels } else { scan.target_count };
+                let label_count = if transitions {
+                    labels
+                } else {
+                    scan.target_count
+                };
                 if parent >= u64::from(scan.count) || label >= u64::from(label_count) {
                     return Err("NATIVE_PATH_SCAN_RESULT_BOUNDS".into());
                 }
@@ -583,7 +592,10 @@ fn search(
     let mut bfs = GenericNativeBfs::new(&query.graph, query.device, plan, 0x19f856a2, 64)?;
     let mut tile_data = Vec::new();
     let mut layers = vec![(bfs.current_start, bfs.frontier_len())];
-    let checkpoint = || time.stop_reason().map_or(Ok(()), |reason| Err(reason.into()));
+    let checkpoint = || {
+        time.stop_reason()
+            .map_or(Ok(()), |reason| Err(reason.into()))
+    };
 
     let (target_index, mut final_edge) = 'layers: loop {
         let depth = layers.len() as u64 - 1;
@@ -902,7 +914,8 @@ pub(crate) fn distributed_forward(
         }
         encode_distributed_match(&mut local, &hit, &time);
         bfs.gather_path_words(&local, &tx, &rx, &mut gathered)?;
-        if let Some(reason) = distributed_stop(&gathered, NEAREST_REPLY_WORDS, hit.as_ref().err())? {
+        if let Some(reason) = distributed_stop(&gathered, NEAREST_REPLY_WORDS, hit.as_ref().err())?
+        {
             break Receipt::incomplete(reason, None);
         }
         let search_depth = depth + usize::from(capacity_exhausted);
@@ -1175,7 +1188,6 @@ pub(crate) fn process_peak_rss_bytes() -> Option<u64> {
         .checked_mul(1024)
 }
 
-
 /// Produce rank-local CSR and terminal-ID files through a proven window
 /// bound. Only a depth agreed by all ranks is listed in the receipt.
 pub(crate) fn distributed_window_forward(
@@ -1207,7 +1219,9 @@ pub(crate) fn distributed_window_forward(
     })();
     agree_path_stop(bfs, &setup)?;
     let (kernel, ids, mut tile) = setup?;
-    let local_goals: Vec<_> = goals.iter().enumerate()
+    let local_goals: Vec<_> = goals
+        .iter()
+        .enumerate()
         .filter(|(_, goal)| bfs.owns_path_target(goal))
         .collect();
     let time = QueryTime {
@@ -1230,8 +1244,7 @@ pub(crate) fn distributed_window_forward(
             let arena = bfs.path_arena()?;
             let range = (arena.current_start, arena.frontier_len());
             let mut terminals = BufWriter::new(
-                std::fs::File::create(&terminal_path)
-                    .map_err(crate::path_csr::io_error)?,
+                std::fs::File::create(&terminal_path).map_err(crate::path_csr::io_error)?,
             );
             let mut bytes = 0u64;
             for &(target_id, goal) in &local_goals {
@@ -1274,12 +1287,14 @@ pub(crate) fn distributed_window_forward(
         let lineage = TransitionSpool::new(
             output.join(format!("{next}.runs")),
             budget - committed_bytes,
-        ).and_then(WindowLineage::new);
+        )
+        .and_then(WindowLineage::new);
         if let Some(reason) = agree_path_stop(bfs, &lineage)? {
             break ("INCOMPLETE", Some(reason));
         }
         let mut lineage = lineage?;
-        let advanced = bfs.advance_window(&mut lineage, &ids, &mut tile, &|| query_checkpoint(&time));
+        let advanced =
+            bfs.advance_window(&mut lineage, &ids, &mut tile, &|| query_checkpoint(&time));
         let mut spool = lineage.into_spool(&advanced)?;
         peak_bytes = peak_bytes.max(committed_bytes + spool.peak_reserved_bytes());
         match advanced {
@@ -1360,7 +1375,10 @@ pub(crate) fn distributed_window_bidirectional(
         let buffers = (
             QueryGpu::new(&arena.plan, width * 8, arena.device, scan)?,
             // The owner tile and cut join are sequential and drain before reuse.
-            Buffer::new(forward.window_edge_bytes().max(WINDOW_JOIN_ROWS * 4), arena.device)?,
+            Buffer::new(
+                forward.window_edge_bytes().max(WINDOW_JOIN_ROWS * 4),
+                arena.device,
+            )?,
             WindowTile::new(forward.window_plan(), arena.device)?,
         );
         crate::session_cache::generic_requirements_consumed()?;
@@ -1388,7 +1406,8 @@ pub(crate) fn distributed_window_bidirectional(
         }
         let arena = sides[1].path_arena()?;
         let range = (arena.current_start, arena.frontier_len());
-        let file = std::fs::File::create(roots[1].join("0.targets")).map_err(crate::path_csr::io_error)?;
+        let file =
+            std::fs::File::create(roots[1].join("0.targets")).map_err(crate::path_csr::io_error)?;
         let mut writer = BufWriter::new(file);
         let mut bytes = 0u64;
         for (index, goal) in goals.iter().enumerate() {
@@ -1435,12 +1454,14 @@ pub(crate) fn distributed_window_bidirectional(
                 let lineage = TransitionSpool::new(
                     root.join(format!("{depth}.runs")),
                     budget - committed_bytes,
-                ).and_then(WindowLineage::new);
+                )
+                .and_then(WindowLineage::new);
                 if let Some(reason) = agree_path_stop(sides[0], &lineage)? {
                     break 'window ("INCOMPLETE", Some(reason));
                 }
                 let mut lineage = lineage?;
-                let advanced = sides[side].advance_window(&mut lineage, &ids, &mut tile, &|| query_checkpoint(&time));
+                let advanced = sides[side]
+                    .advance_window(&mut lineage, &ids, &mut tile, &|| query_checkpoint(&time));
                 let mut spool = lineage.into_spool(&advanced)?;
                 peak_bytes = peak_bytes.max(committed_bytes + spool.peak_reserved_bytes());
                 match advanced {

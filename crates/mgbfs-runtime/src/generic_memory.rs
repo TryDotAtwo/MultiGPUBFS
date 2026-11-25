@@ -1,4 +1,4 @@
-pub const MAX_ARENA_CAPACITY:u32=0x7fff_fffe;
+pub const MAX_ARENA_CAPACITY: u32 = 0x7fff_fffe;
 use mgbfs_core::Result;
 
 /// Distributed nearest expands immutable contiguous visited rows directly.
@@ -12,78 +12,190 @@ pub(crate) fn nearest_direct_rows() -> bool {
 /// are already excluded too. Cold distributed admission retains 2 GiB until
 /// that condition is proved. Explicit buffers and sorted driver graph storage
 /// remain in device_bytes and are not charged here again.
-pub fn reserve_for_communicator(warmed:bool)->u64 {if warmed {256u64<<20}else{2u64<<30}}
-pub(crate) fn admission_reserve_for_communicator(warmed:bool)->Result<u64> {
- if let Ok(value)=std::env::var("MGBFS_GENERIC_VRAM_RESERVE_BYTES") {
-  return value.parse::<u64>().map_err(|_|"GENERIC_VRAM_RESERVE_BYTES".into());
- }
- Ok(reserve_for_communicator(warmed))
+pub fn reserve_for_communicator(warmed: bool) -> u64 {
+    if warmed {
+        256u64 << 20
+    } else {
+        2u64 << 30
+    }
 }
-pub fn admission_reserve_bytes()->Result<u64> {
- #[cfg(all(feature="cuda",target_os="linux"))]
- let warmed=crate::session_cache::warmed_communicator();
- #[cfg(not(all(feature="cuda",target_os="linux")))]
- let warmed=false;
- admission_reserve_for_communicator(warmed)
+pub(crate) fn admission_reserve_for_communicator(warmed: bool) -> Result<u64> {
+    if let Ok(value) = std::env::var("MGBFS_GENERIC_VRAM_RESERVE_BYTES") {
+        return value
+            .parse::<u64>()
+            .map_err(|_| "GENERIC_VRAM_RESERVE_BYTES".into());
+    }
+    Ok(reserve_for_communicator(warmed))
 }
-#[cfg(test)]mod reserve_tests {
- #[test]fn reserve_is_absolute_and_warm_nccl_is_not_charged_twice(){
-  assert_eq!(super::reserve_for_communicator(false),2u64<<30);
-  assert_eq!(super::reserve_for_communicator(true),256u64<<20);
-  for free in [12u64<<30,80u64<<30,288u64<<30] {
-   assert_eq!(free-(free-super::reserve_for_communicator(false)),2u64<<30);
-  }
- }
+pub fn admission_reserve_bytes() -> Result<u64> {
+    #[cfg(all(feature = "cuda", target_os = "linux"))]
+    let warmed = crate::session_cache::warmed_communicator();
+    #[cfg(not(all(feature = "cuda", target_os = "linux")))]
+    let warmed = false;
+    admission_reserve_for_communicator(warmed)
+}
+#[cfg(test)]
+mod reserve_tests {
+    #[test]
+    fn reserve_is_absolute_and_warm_nccl_is_not_charged_twice() {
+        assert_eq!(super::reserve_for_communicator(false), 2u64 << 30);
+        assert_eq!(super::reserve_for_communicator(true), 256u64 << 20);
+        for free in [12u64 << 30, 80u64 << 30, 288u64 << 30] {
+            assert_eq!(
+                free - (free - super::reserve_for_communicator(false)),
+                2u64 << 30
+            );
+        }
+    }
 }
 
 /// Exact retained-history arena for general directed CayleyPy graphs.
 /// Separate from the compact inverse-closed specialized SHARD_AB layout.
-#[derive(Clone,Debug)]
-pub struct GenericMemoryPlan {pub state_bytes:u32,pub elements:u32,pub capacity:u32,pub table_slots:u64,pub batch:u32,pub device_bytes:u64}
+#[derive(Clone, Debug)]
+pub struct GenericMemoryPlan {
+    pub state_bytes: u32,
+    pub elements: u32,
+    pub capacity: u32,
+    pub table_slots: u64,
+    pub batch: u32,
+    pub device_bytes: u64,
+}
 impl GenericMemoryPlan {
- pub fn new(elements:u32,capacity:u32)->Result<Self>{Self::with_storage(elements,capacity,8)}
- pub fn with_storage(elements:u32,capacity:u32,state_bytes:u32)->Result<Self>{
-  if ![1,8].contains(&state_bytes)||elements==0||capacity==0||capacity>MAX_ARENA_CAPACITY{return Err("GENERIC_ARENA_SHAPE".into());}
-  let slots=u64::from(capacity).checked_mul(2).and_then(u64::checked_next_power_of_two).ok_or("GENERIC_TABLE_SHAPE")?;
-  let bytes=u64::from(elements).checked_mul(u64::from(capacity)).and_then(|v|v.checked_mul(u64::from(state_bytes)*2)).and_then(|v|v.checked_add(u64::from(capacity)*8)).and_then(|v|v.checked_add(u64::from(slots)*8+24)).ok_or("GENERIC_ARENA_OVERFLOW")?;
-  Ok(Self{state_bytes,elements,capacity,table_slots:slots,batch:capacity.min(1<<20),device_bytes:bytes})
- }
- pub fn automatic(elements:u32,free_bytes:u64,upper_bound:Option<u64>)->Result<Self>{Self::automatic_storage(elements,free_bytes,upper_bound,8)}
- pub fn automatic_storage(elements:u32,free_bytes:u64,upper_bound:Option<u64>,state_bytes:u32)->Result<Self>{
-  let reserve=admission_reserve_bytes()?;let available=free_bytes.checked_sub(reserve).ok_or("GENERIC_VRAM_HEADROOM")?;
-  let mut low=1u32;let mut high=upper_bound.unwrap_or(u64::from(MAX_ARENA_CAPACITY)).min(u64::from(MAX_ARENA_CAPACITY)) as u32;
-  if high==0||Self::with_storage(elements,1,state_bytes)?.device_bytes>available{return Err("GENERIC_VRAM_CAPACITY".into());}
-  while low<high {let mid=low+(high-low+1)/2;if Self::with_storage(elements,mid,state_bytes)?.device_bytes<=available{low=mid;}else{high=mid-1;}}
-  Self::with_storage(elements,low,state_bytes)
- }
+    pub fn new(elements: u32, capacity: u32) -> Result<Self> {
+        Self::with_storage(elements, capacity, 8)
+    }
+    pub fn with_storage(elements: u32, capacity: u32, state_bytes: u32) -> Result<Self> {
+        if ![1, 8].contains(&state_bytes)
+            || elements == 0
+            || capacity == 0
+            || capacity > MAX_ARENA_CAPACITY
+        {
+            return Err("GENERIC_ARENA_SHAPE".into());
+        }
+        let slots = u64::from(capacity)
+            .checked_mul(2)
+            .and_then(u64::checked_next_power_of_two)
+            .ok_or("GENERIC_TABLE_SHAPE")?;
+        let bytes = u64::from(elements)
+            .checked_mul(u64::from(capacity))
+            .and_then(|v| v.checked_mul(u64::from(state_bytes) * 2))
+            .and_then(|v| v.checked_add(u64::from(capacity) * 8))
+            .and_then(|v| v.checked_add(u64::from(slots) * 8 + 24))
+            .ok_or("GENERIC_ARENA_OVERFLOW")?;
+        Ok(Self {
+            state_bytes,
+            elements,
+            capacity,
+            table_slots: slots,
+            batch: capacity.min(1 << 20),
+            device_bytes: bytes,
+        })
+    }
+    pub fn automatic(elements: u32, free_bytes: u64, upper_bound: Option<u64>) -> Result<Self> {
+        Self::automatic_storage(elements, free_bytes, upper_bound, 8)
+    }
+    pub fn automatic_storage(
+        elements: u32,
+        free_bytes: u64,
+        upper_bound: Option<u64>,
+        state_bytes: u32,
+    ) -> Result<Self> {
+        let reserve = admission_reserve_bytes()?;
+        let available = free_bytes
+            .checked_sub(reserve)
+            .ok_or("GENERIC_VRAM_HEADROOM")?;
+        let mut low = 1u32;
+        let mut high = upper_bound
+            .unwrap_or(u64::from(MAX_ARENA_CAPACITY))
+            .min(u64::from(MAX_ARENA_CAPACITY)) as u32;
+        if high == 0 || Self::with_storage(elements, 1, state_bytes)?.device_bytes > available {
+            return Err("GENERIC_VRAM_CAPACITY".into());
+        }
+        while low < high {
+            let mid = low + (high - low + 1) / 2;
+            if Self::with_storage(elements, mid, state_bytes)?.device_bytes <= available {
+                low = mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+        Self::with_storage(elements, low, state_bytes)
+    }
 }
 
 /// Exact orbit size for a cyclic permutation action, using only definition
 /// metadata. Independent permutation cycles contribute their label periods;
 /// their least common multiple is the start-vector period. No BFS states are
 /// generated by this startup calculation.
-fn cyclic_permutation_orbit_bound(generators:&[Vec<u32>],start:&[i64])->Option<u64>{
- let n=start.len();let limit=u64::MAX;
- if n==0||generators.is_empty()||generators.iter().any(|g|g.len()!=n){return None}
- let base=match generators.iter().find(|g|g.iter().enumerate().any(|(i,&v)|v as usize!=i)){
-  Some(g)=>g,None=>return Some(1),
- };
- let mut inverse=vec![u32::MAX;n];
- for (i,&v) in base.iter().enumerate(){let v=v as usize;if v>=n||inverse[v]!=u32::MAX{return None}inverse[v]=i as u32;}
- if generators.iter().any(|g|g!=base&&g!=&inverse&&g.iter().enumerate().any(|(i,&v)|v as usize!=i)){return None}
- let mut visited=vec![false;n];let mut bound=1u64;
- for root in 0..n{
-  if visited[root]{continue}
-  let mut values=Vec::new();let mut at=root;
-  while !visited[at]{visited[at]=true;values.push(start[at]);at=base[at] as usize;}
-  let mut prefix=vec![0usize;values.len()];
-  for i in 1..values.len(){let mut j=prefix[i-1];while j>0&&values[i]!=values[j]{j=prefix[j-1]}if values[i]==values[j]{j+=1}prefix[i]=j;}
-  let candidate=values.len()-prefix[values.len()-1];
-  let period=if values.len()%candidate==0{candidate}else{values.len()} as u64;
-  let(mut a,mut b)=(bound,period);while b!=0{let rem=a%b;a=b;b=rem;}
-  bound=(bound/a).saturating_mul(period).min(limit);if bound==limit{return Some(limit)}
- }
- Some(bound)
+fn cyclic_permutation_orbit_bound(generators: &[Vec<u32>], start: &[i64]) -> Option<u64> {
+    let n = start.len();
+    let limit = u64::MAX;
+    if n == 0 || generators.is_empty() || generators.iter().any(|g| g.len() != n) {
+        return None;
+    }
+    let base = match generators
+        .iter()
+        .find(|g| g.iter().enumerate().any(|(i, &v)| v as usize != i))
+    {
+        Some(g) => g,
+        None => return Some(1),
+    };
+    let mut inverse = vec![u32::MAX; n];
+    for (i, &v) in base.iter().enumerate() {
+        let v = v as usize;
+        if v >= n || inverse[v] != u32::MAX {
+            return None;
+        }
+        inverse[v] = i as u32;
+    }
+    if generators
+        .iter()
+        .any(|g| g != base && g != &inverse && g.iter().enumerate().any(|(i, &v)| v as usize != i))
+    {
+        return None;
+    }
+    let mut visited = vec![false; n];
+    let mut bound = 1u64;
+    for root in 0..n {
+        if visited[root] {
+            continue;
+        }
+        let mut values = Vec::new();
+        let mut at = root;
+        while !visited[at] {
+            visited[at] = true;
+            values.push(start[at]);
+            at = base[at] as usize;
+        }
+        let mut prefix = vec![0usize; values.len()];
+        for i in 1..values.len() {
+            let mut j = prefix[i - 1];
+            while j > 0 && values[i] != values[j] {
+                j = prefix[j - 1]
+            }
+            if values[i] == values[j] {
+                j += 1
+            }
+            prefix[i] = j;
+        }
+        let candidate = values.len() - prefix[values.len() - 1];
+        let period = if values.len() % candidate == 0 {
+            candidate
+        } else {
+            values.len()
+        } as u64;
+        let (mut a, mut b) = (bound, period);
+        while b != 0 {
+            let rem = a % b;
+            a = b;
+            b = rem;
+        }
+        bound = (bound / a).saturating_mul(period).min(limit);
+        if bound == limit {
+            return Some(limit);
+        }
+    }
+    Some(bound)
 }
 
 /// The generators can flip several pairs together. The reachable orientations
@@ -135,59 +247,153 @@ fn paired_permutation_orbit_size(generators: &[Vec<u32>], start: &[i64]) -> Opti
 
 /// Mathematical state-space bound, saturated only at u64::MAX.
 /// Used for admission, not as evidence that the graph has been enumerated.
-pub fn state_space_bound(graph:&mgbfs_core::graph_definition::GraphDefinitionV2)->Option<u64>{
- use mgbfs_core::graph_definition::GraphAction;let limit=u64::MAX;
- let proven=match &graph.action{
-  GraphAction::Permutation{generators,..}=>{
-   if let Some(cyclic)=cyclic_permutation_orbit_bound(generators,&graph.start){return Some(graph.expected_max_unique_states.map_or(cyclic,|b|cyclic.min(b)))}
-   if let Some(paired)=paired_permutation_orbit_size(generators,&graph.start){return Some(graph.expected_max_unique_states.map_or(paired,|b|paired.min(b)))}
-   // Generators cannot move a label between position components. Count
-   // arrangements within each component; correlated components only make
-   // this conservative upper bound smaller than the global multinomial.
-   fn root(parent:&mut [usize],mut i:usize)->usize{while parent[i]!=i{parent[i]=parent[parent[i]];i=parent[i];}i}
-   let n=graph.start.len();let mut parent=(0..n).collect::<Vec<_>>();
-   for generator in generators {for (i,&j) in generator.iter().enumerate(){let a=root(&mut parent,i);let b=root(&mut parent,j as usize);parent[a]=b;}}
-   let mut components=std::collections::BTreeMap::<usize,std::collections::BTreeMap<i64,u64>>::new();
-   for (i,&label) in graph.start.iter().enumerate(){let component=root(&mut parent,i);*components.entry(component).or_default().entry(label).or_default()+=1;}
-   let mut bound=1u64;
-   for counts in components.values(){let mut remaining=counts.values().sum::<u64>();for &count in counts.values(){let k=count.min(remaining-count);let mut choose=1u64;for i in 1..=k{choose=((u128::from(choose)*u128::from(remaining-k+i)/u128::from(i)).min(u128::from(limit))) as u64;if choose>=limit{choose=limit;break;}}bound=bound.saturating_mul(choose).min(limit);remaining-=count;}if bound==limit{break;}}
-   Some(bound)
-  },
-  GraphAction::Matrix{generators,..}=>{
-   let modulus=generators.first().map(|v|v.modulo).unwrap_or(0);
-   if modulus==0||generators.iter().any(|v|v.modulo!=modulus){None}else{
-    let mut bound=1u64;for _ in &graph.start{bound=bound.saturating_mul(u64::from(modulus)).min(limit);if bound==limit{break;}}
-    if graph.start.iter().any(|&v|v<0||v>=i64::from(modulus)){bound=bound.saturating_add(1).min(limit);}Some(bound)
-   }
-  },
- };
- match (proven,graph.expected_max_unique_states){(Some(a),Some(b))=>Some(a.min(b)),(a,b)=>a.or(b)}
+pub fn state_space_bound(graph: &mgbfs_core::graph_definition::GraphDefinitionV2) -> Option<u64> {
+    use mgbfs_core::graph_definition::GraphAction;
+    let limit = u64::MAX;
+    let proven = match &graph.action {
+        GraphAction::Permutation { generators, .. } => {
+            if let Some(cyclic) = cyclic_permutation_orbit_bound(generators, &graph.start) {
+                return Some(
+                    graph
+                        .expected_max_unique_states
+                        .map_or(cyclic, |b| cyclic.min(b)),
+                );
+            }
+            if let Some(paired) = paired_permutation_orbit_size(generators, &graph.start) {
+                return Some(
+                    graph
+                        .expected_max_unique_states
+                        .map_or(paired, |b| paired.min(b)),
+                );
+            }
+            // Generators cannot move a label between position components. Count
+            // arrangements within each component; correlated components only make
+            // this conservative upper bound smaller than the global multinomial.
+            fn root(parent: &mut [usize], mut i: usize) -> usize {
+                while parent[i] != i {
+                    parent[i] = parent[parent[i]];
+                    i = parent[i];
+                }
+                i
+            }
+            let n = graph.start.len();
+            let mut parent = (0..n).collect::<Vec<_>>();
+            for generator in generators {
+                for (i, &j) in generator.iter().enumerate() {
+                    let a = root(&mut parent, i);
+                    let b = root(&mut parent, j as usize);
+                    parent[a] = b;
+                }
+            }
+            let mut components =
+                std::collections::BTreeMap::<usize, std::collections::BTreeMap<i64, u64>>::new();
+            for (i, &label) in graph.start.iter().enumerate() {
+                let component = root(&mut parent, i);
+                *components
+                    .entry(component)
+                    .or_default()
+                    .entry(label)
+                    .or_default() += 1;
+            }
+            let mut bound = 1u64;
+            for counts in components.values() {
+                let mut remaining = counts.values().sum::<u64>();
+                for &count in counts.values() {
+                    let k = count.min(remaining - count);
+                    let mut choose = 1u64;
+                    for i in 1..=k {
+                        choose = ((u128::from(choose) * u128::from(remaining - k + i)
+                            / u128::from(i))
+                        .min(u128::from(limit))) as u64;
+                        if choose >= limit {
+                            choose = limit;
+                            break;
+                        }
+                    }
+                    bound = bound.saturating_mul(choose).min(limit);
+                    remaining -= count;
+                }
+                if bound == limit {
+                    break;
+                }
+            }
+            Some(bound)
+        }
+        GraphAction::Matrix { generators, .. } => {
+            let modulus = generators.first().map(|v| v.modulo).unwrap_or(0);
+            if modulus == 0 || generators.iter().any(|v| v.modulo != modulus) {
+                None
+            } else {
+                let mut bound = 1u64;
+                for _ in &graph.start {
+                    bound = bound.saturating_mul(u64::from(modulus)).min(limit);
+                    if bound == limit {
+                        break;
+                    }
+                }
+                if graph
+                    .start
+                    .iter()
+                    .any(|&v| v < 0 || v >= i64::from(modulus))
+                {
+                    bound = bound.saturating_add(1).min(limit);
+                }
+                Some(bound)
+            }
+        }
+    };
+    match (proven, graph.expected_max_unique_states) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
 }
 
 /// Permutations preserve the value alphabet exactly; matrix arithmetic does not.
-pub fn preferred_state_bytes(graph:&mgbfs_core::graph_definition::GraphDefinitionV2)->u32{
- if matches!(graph.action,mgbfs_core::graph_definition::GraphAction::Permutation{..})&&graph.start.iter().all(|v|(0..=255).contains(v)){1}else{8}
+pub fn preferred_state_bytes(graph: &mgbfs_core::graph_definition::GraphDefinitionV2) -> u32 {
+    if matches!(
+        graph.action,
+        mgbfs_core::graph_definition::GraphAction::Permutation { .. }
+    ) && graph.start.iter().all(|v| (0..=255).contains(v))
+    {
+        1
+    } else {
+        8
+    }
 }
 
-#[cfg(test)]mod capacity_budget_tests {
- #[test]
- fn paired_orbit_accounts_for_coupled_flips_and_equal_labels() {
-  let start = [-7, 3, 5, -2, 8, 9, 4, 4];
-  let a = vec![1, 0, 3, 2, 4, 5, 7, 6];
-  let b = vec![0, 1, 3, 2, 5, 4, 6, 7];
-  let dependent = vec![1, 0, 2, 3, 5, 4, 6, 7];
-  assert_eq!(super::paired_permutation_orbit_size(&[a.clone(), b, dependent], &start), Some(4));
-  let different_partner = vec![2, 1, 0, 3, 4, 5, 6, 7];
-  assert_eq!(super::paired_permutation_orbit_size(&[a, different_partner], &start), None);
- }
+#[cfg(test)]
+mod capacity_budget_tests {
+    #[test]
+    fn paired_orbit_accounts_for_coupled_flips_and_equal_labels() {
+        let start = [-7, 3, 5, -2, 8, 9, 4, 4];
+        let a = vec![1, 0, 3, 2, 4, 5, 7, 6];
+        let b = vec![0, 1, 3, 2, 5, 4, 6, 7];
+        let dependent = vec![1, 0, 2, 3, 5, 4, 6, 7];
+        assert_eq!(
+            super::paired_permutation_orbit_size(&[a.clone(), b, dependent], &start),
+            Some(4)
+        );
+        let different_partner = vec![2, 1, 0, 3, 4, 5, 6, 7];
+        assert_eq!(
+            super::paired_permutation_orbit_size(&[a, different_partner], &start),
+            None
+        );
+    }
 
- #[test]fn synthetic_large_cards_fill_the_absolute_budget(){
-  for free in [12u64<<30,80u64<<30,288u64<<30] {
-   let p=super::GenericMemoryPlan::automatic(24,free,None).unwrap();
-   let budget=free-(2u64<<30);assert!(p.device_bytes<=budget);
-   if p.capacity<super::MAX_ARENA_CAPACITY {
-    assert!(super::GenericMemoryPlan::new(24,p.capacity+1).unwrap().device_bytes>budget);
-   }
-  }
- }
+    #[test]
+    fn synthetic_large_cards_fill_the_absolute_budget() {
+        for free in [12u64 << 30, 80u64 << 30, 288u64 << 30] {
+            let p = super::GenericMemoryPlan::automatic(24, free, None).unwrap();
+            let budget = free - (2u64 << 30);
+            assert!(p.device_bytes <= budget);
+            if p.capacity < super::MAX_ARENA_CAPACITY {
+                assert!(
+                    super::GenericMemoryPlan::new(24, p.capacity + 1)
+                        .unwrap()
+                        .device_bytes
+                        > budget
+                );
+            }
+        }
+    }
 }

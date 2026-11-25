@@ -11,7 +11,11 @@ pub(crate) struct Meeting {
 
 impl Meeting {
     pub(crate) fn reply_words(&self) -> [i64; 3] {
-        [self.right_depth as i64, self.left_row as i64, self.right_row as i64]
+        [
+            self.right_depth as i64,
+            self.left_row as i64,
+            self.right_row as i64,
+        ]
     }
 
     pub(crate) fn from_reply_words([depth, left, right]: [i64; 3]) -> Result<Self> {
@@ -127,6 +131,9 @@ mod meeting_tests {
             right_row: (1 << 63) + 29,
             right_depth: 4,
         };
-        assert_eq!(Meeting::from_reply_words(meeting.reply_words()).unwrap(), meeting);
+        assert_eq!(
+            Meeting::from_reply_words(meeting.reply_words()).unwrap(),
+            meeting
+        );
     }
 }

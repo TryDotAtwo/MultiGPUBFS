@@ -1,14 +1,10 @@
 //! Native scheduling contracts. CPU models are verification tools, not GPU fallbacks.
 pub mod admitted_buffers;
 pub mod archive;
+#[cfg(feature = "cuda")]
+mod batch_graph;
 pub mod benchmark;
 pub mod bootstrap;
-pub mod reference_launch;
-pub mod session_protocol;
-#[cfg(all(feature = "cuda", target_os = "linux"))]
-pub mod session_worker;
-#[cfg(feature = "cuda")]
-mod session_cache;
 pub mod byte_admission;
 mod control_admission;
 pub mod control_connection;
@@ -22,8 +18,6 @@ pub mod dense_frames;
 pub mod distributed_memory;
 #[cfg(feature = "cuda")]
 pub mod distributed_native;
-#[cfg(feature = "cuda")]
-mod batch_graph;
 pub mod epoch_coordinator;
 pub mod event_generation;
 pub mod exchange;
@@ -52,58 +46,65 @@ pub mod rank_epochs;
 pub mod receipts;
 #[cfg(all(feature = "cuda", target_os = "linux"))]
 pub mod reference_bench;
+pub mod reference_launch;
 pub mod ring;
 pub mod route_count;
 pub mod scatter_admission;
+mod segmented_packet_transport;
+#[cfg(feature = "cuda")]
+mod session_cache;
+pub mod session_protocol;
+#[cfg(all(feature = "cuda", target_os = "linux"))]
+pub mod session_worker;
 pub mod simulation;
 pub mod source_banks;
 pub mod topology;
 pub mod transport;
-mod segmented_packet_transport;
 
 #[cfg(all(feature = "cuda", target_os = "linux"))]
 pub mod cuda_loading;
 
-pub mod generic_memory;
 mod generic_gemm;
+pub mod generic_memory;
 
-#[cfg(feature="cuda")]
+#[cfg(feature = "cuda")]
 pub mod generic_native;
 
-#[cfg(all(feature="cuda",target_os="linux"))]
+#[cfg(all(feature = "cuda", target_os = "linux"))]
 pub mod generic_run;
 
-#[cfg(all(feature="cuda",target_os="linux"))]
+#[cfg(all(feature = "cuda", target_os = "linux"))]
 pub mod generic_path_native;
 
 pub mod generic_route;
 
 pub mod generic_distributed_memory;
 
-#[cfg(feature="cuda")]
+#[cfg(feature = "cuda")]
 pub mod generic_distributed_native;
 
-#[cfg(all(feature="cuda",target_os="linux"))]
+#[cfg(all(feature = "cuda", target_os = "linux"))]
 pub mod generic_distributed_run;
 
 #[cfg(any(all(feature = "cuda", target_os = "linux"), test))]
 mod terminal_evidence;
 
-#[cfg(feature="cuda")]
+#[cfg(feature = "cuda")]
 mod generic_sorted_native;
 
-#[cfg(all(feature="cuda",target_os="linux"))]
+#[cfg(all(feature = "cuda", target_os = "linux"))]
 pub mod generic_session;
 
-#[cfg(all(feature="cuda",target_os="linux"))]
+#[cfg(all(feature = "cuda", target_os = "linux"))]
 mod generic_pool;
 
-#[cfg(all(feature="cuda",target_os="linux"))]
+#[cfg(all(feature = "cuda", target_os = "linux"))]
 mod job_phase;
 
-#[cfg(target_os="linux")]
+#[cfg(feature = "cuda")]
+mod segmented_host_ready;
+#[cfg(target_os = "linux")]
 mod session_wait;
-#[cfg(feature="cuda")] mod segmented_host_ready;
 
 /// Native call and layer context, also testable without CUDA.
 pub mod native_fault;
@@ -112,7 +113,7 @@ pub mod native_fault;
 pub mod segmented_history;
 pub mod segmented_strategy;
 
-#[cfg(all(feature="cuda",target_os="linux"))]
+#[cfg(all(feature = "cuda", target_os = "linux"))]
 mod segmented_distributed_native;
 
 pub mod permutation_bitmap;

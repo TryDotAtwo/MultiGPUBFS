@@ -167,7 +167,8 @@ impl TransitionSpool {
     // A provisional child ID sorts by shard and local row. The final merge
     // converts it to a dense rank-local ID once all shard counts are known.
     pub(crate) fn add_shard(&mut self, shard: u32, mut records: &mut [Transition]) -> Result<()> {
-        if shard as usize >= MAX_SHARDS || records.iter().any(|edge| edge.child >= SHARD_ROW_LIMIT) {
+        if shard as usize >= MAX_SHARDS || records.iter().any(|edge| edge.child >= SHARD_ROW_LIMIT)
+        {
             return Err("PATH_LINEAGE_SHARD_ROW".into());
         }
         if shard != 0 {
@@ -257,8 +258,13 @@ impl TransitionSpool {
             self.reserve(csr_bytes)?;
             self.pending.sort_unstable();
             let bytes = write_owner_csr(
-                staging, committed, rows, edges, self.budget,
-                self.pending.iter().copied().map(Ok).map(dense), checkpoint,
+                staging,
+                committed,
+                rows,
+                edges,
+                self.budget,
+                self.pending.iter().copied().map(Ok).map(dense),
+                checkpoint,
             )?;
             self.pending.clear();
             return Ok((bytes, self.peak));
@@ -318,7 +324,9 @@ impl TransitionSpool {
             rows,
             edges,
             self.budget - self.live,
-            Merge::new(&inputs)?.with_tail(std::mem::take(&mut self.pending)).map(dense),
+            Merge::new(&inputs)?
+                .with_tail(std::mem::take(&mut self.pending))
+                .map(dense),
             checkpoint,
         )?;
         Ok((bytes, self.peak))
@@ -398,15 +406,16 @@ fn write_owner_csr(
             }
             let edge = item?;
             let child = edge.child;
-            if child >= rows || child > next_child || child + 1 < next_child
-            {
+            if child >= rows || child > next_child || child + 1 < next_child {
                 return Err("PATH_LINEAGE_CHILD_ORDER".into());
             }
             if child == next_child {
                 offsets.write_all(&count.to_le_bytes()).map_err(io_error)?;
                 next_child += 1;
             }
-            bytes = bytes.checked_add(CSR_EDGE_BYTES).ok_or("PATH_LINEAGE_SIZE")?;
+            bytes = bytes
+                .checked_add(CSR_EDGE_BYTES)
+                .ok_or("PATH_LINEAGE_SIZE")?;
             if bytes > budget {
                 return Err("LINEAGE_LIMIT".into());
             }
@@ -462,11 +471,17 @@ mod tests {
         use std::io::{Error, ErrorKind};
         #[cfg(target_os = "linux")]
         for code in [libc::ENOSPC, libc::EDQUOT] {
-            assert_eq!(io_error(Error::from_raw_os_error(code)), "LINEAGE_DISK_FULL");
+            assert_eq!(
+                io_error(Error::from_raw_os_error(code)),
+                "LINEAGE_DISK_FULL"
+            );
         }
         #[cfg(windows)]
         for code in [39, 112] {
-            assert_eq!(io_error(Error::from_raw_os_error(code)), "LINEAGE_DISK_FULL");
+            assert_eq!(
+                io_error(Error::from_raw_os_error(code)),
+                "LINEAGE_DISK_FULL"
+            );
         }
         assert!(io_error(Error::from(ErrorKind::PermissionDenied)).starts_with("PATH_LINEAGE_IO"));
     }
@@ -512,16 +527,22 @@ mod tests {
         let staging = root.join("stage");
         let committed = root.join("complete");
         let mut spool = TransitionSpool::new(work.clone(), 32).unwrap();
-        spool.add(&mut [Transition {
-            child: 0,
-            parent_rank: 0,
-            parent: 0,
-            generator: 7,
-        }]).unwrap();
+        spool
+            .add(&mut [Transition {
+                child: 0,
+                parent_rank: 0,
+                parent: 0,
+                generator: 7,
+            }])
+            .unwrap();
         let mut calls = 0;
         let result = spool.finish(&staging, &committed, &[1], || {
             calls += 1;
-            if calls == 3 { Err("CANCELLED".into()) } else { Ok(()) }
+            if calls == 3 {
+                Err("CANCELLED".into())
+            } else {
+                Ok(())
+            }
         });
         assert_eq!(result.unwrap_err(), "CANCELLED");
         assert_eq!(spool.peak_reserved_bytes(), 32);
@@ -537,11 +558,18 @@ mod tests {
         fs::create_dir(&root).unwrap();
         let budget = 16 + RUN_ROWS as u64 * CSR_EDGE_BYTES;
         let mut spool = TransitionSpool::new(root.join("spool"), budget).unwrap();
-        let edge = Transition { child: 0, parent_rank: 1, parent: 7, generator: 3 };
+        let edge = Transition {
+            child: 0,
+            parent_rank: 1,
+            parent: 7,
+            generator: 3,
+        };
         spool.add(&mut vec![edge; RUN_ROWS]).unwrap();
         assert_eq!(spool.runs, 0);
         assert_eq!(
-            spool.finish(&root.join("stage"), &root.join("csr"), &[1], || Ok(())).unwrap(),
+            spool
+                .finish(&root.join("stage"), &root.join("csr"), &[1], || Ok(()))
+                .unwrap(),
             (budget, budget),
         );
         drop(spool);
@@ -555,16 +583,34 @@ mod tests {
         let final_bytes = 24 + (RUN_ROWS as u64 + 1) * CSR_EDGE_BYTES;
         let budget = final_bytes + (RUN_ROWS * RECORD_BYTES) as u64;
         let mut spool = TransitionSpool::new(root.join("spool"), budget).unwrap();
-        let edge = Transition { child: 0, parent_rank: 1, parent: 7, generator: 3 };
+        let edge = Transition {
+            child: 0,
+            parent_rank: 1,
+            parent: 7,
+            generator: 3,
+        };
         spool.add_shard(2, &mut vec![edge; RUN_ROWS]).unwrap();
-        spool.add(&mut [Transition { child: 0, generator: 11, ..edge }]).unwrap();
+        spool
+            .add(&mut [Transition {
+                child: 0,
+                generator: 11,
+                ..edge
+            }])
+            .unwrap();
         let committed = root.join("csr");
         assert_eq!(
-            spool.finish(&root.join("stage"), &committed, &[1, 0, 1], || Ok(())).unwrap(),
+            spool
+                .finish(&root.join("stage"), &committed, &[1, 0, 1], || Ok(()))
+                .unwrap(),
             (final_bytes, budget),
         );
         let offsets = fs::read(committed.join("offsets")).unwrap();
-        assert_eq!(offsets, [0u64, 1, RUN_ROWS as u64 + 1].map(u64::to_le_bytes).concat());
+        assert_eq!(
+            offsets,
+            [0u64, 1, RUN_ROWS as u64 + 1]
+                .map(u64::to_le_bytes)
+                .concat()
+        );
         let edges = fs::read(committed.join("edges")).unwrap();
         assert_eq!(&edges[12..16], &11u32.to_le_bytes());
         drop(spool);
@@ -573,16 +619,24 @@ mod tests {
 
     #[test]
     fn spilled_runs_keep_distinct_children_with_equal_low_words() {
-        let root = std::env::temp_dir().join(format!("mgbfs-csr-wide-child-{}", std::process::id()));
-        let mut spool = TransitionSpool::new(root.clone(), (RUN_ROWS * RECORD_BYTES) as u64).unwrap();
+        let root =
+            std::env::temp_dir().join(format!("mgbfs-csr-wide-child-{}", std::process::id()));
+        let mut spool =
+            TransitionSpool::new(root.clone(), (RUN_ROWS * RECORD_BYTES) as u64).unwrap();
         let low = Transition {
             child: 3,
             parent_rank: 2,
             parent: (1 << 41) + 11,
             generator: 7,
         };
-        let high = Transition { child: (1 << 32) + 3, ..low };
-        let parallel = Transition { generator: 9, ..high };
+        let high = Transition {
+            child: (1 << 32) + 3,
+            ..low
+        };
+        let parallel = Transition {
+            generator: 9,
+            ..high
+        };
         let mut run = vec![high; RUN_ROWS];
         run[0] = parallel;
         spool.add(&mut run).unwrap();
@@ -713,7 +767,9 @@ mod tests {
             "LINEAGE_LIMIT"
         );
         assert!(!staging.exists() && !committed.exists());
-        assert!(write_owner_csr(&staging, &committed, 2, 3, 72, [Ok(links[2])], || Ok(())).is_err());
+        assert!(
+            write_owner_csr(&staging, &committed, 2, 3, 72, [Ok(links[2])], || Ok(())).is_err()
+        );
         assert!(!staging.exists() && !committed.exists());
         assert_eq!(
             write_owner_csr(&staging, &committed, 2, 3, 72, records(), || Ok(())).unwrap(),

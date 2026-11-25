@@ -49,11 +49,13 @@ use mgbfs_core::{
 };
 #[cfg(feature = "library-owner")]
 use mgbfs_cuda::library_owner::*;
-use mgbfs_cuda::{ffi::*, native_owner::*};
 use mgbfs_cuda::shard_ab::*;
+use mgbfs_cuda::{ffi::*, native_owner::*};
 use std::ffi::{c_void, CStr};
 
-pub fn enable_session_cache() { crate::session_cache::enable(); }
+pub fn enable_session_cache() {
+    crate::session_cache::enable();
+}
 
 extern "C" {
     fn cudaStreamBeginCapture(stream: *mut c_void, mode: i32) -> i32;
@@ -419,7 +421,9 @@ impl Drop for LibraryOwnerStorage {
                     drained = mgbfs_library_cuco_workspace_destroy_v1(self.cuco_workspace) == 0;
                 }
                 if drained {
-                    if !crate::session_cache::pool_put(self.pool) { mgbfs_library_pool_destroy_v1(self.pool); }
+                    if !crate::session_cache::pool_put(self.pool) {
+                        mgbfs_library_pool_destroy_v1(self.pool);
+                    }
                 }
             }
         }
@@ -781,13 +785,16 @@ fn admit_device_group(
         if vote(u32::from(status.is_err()))? != 0 {
             return Err("MEMORY_QUERY_GROUP_FAILED".into());
         }
-        println!("MGBFS_MEMORY_QUERY {}", serde_json::json!({
-            "schema": 1, "rank": rank, "required_bytes": required, "reserve_bytes": reserve,
-            "free_after_nccl_warmup_bytes": (free as u64 + crate::session_cache::reusable_bytes()+crate::generic_pool::available()?).min(total as u64), "total_bytes": total,
-            "session_reusable_bytes": crate::session_cache::reusable_bytes(),
-            "scope": "explicit_device_allocations_including_fixed_library_pool",
-            "library_pool_bytes": pool_bytes,
-        }));
+        println!(
+            "MGBFS_MEMORY_QUERY {}",
+            serde_json::json!({
+                "schema": 1, "rank": rank, "required_bytes": required, "reserve_bytes": reserve,
+                "free_after_nccl_warmup_bytes": (free as u64 + crate::session_cache::reusable_bytes()+crate::generic_pool::available()?).min(total as u64), "total_bytes": total,
+                "session_reusable_bytes": crate::session_cache::reusable_bytes(),
+                "scope": "explicit_device_allocations_including_fixed_library_pool",
+                "library_pool_bytes": pool_bytes,
+            })
+        );
         std::io::Write::flush(&mut std::io::stdout()).map_err(|e| e.to_string())?;
         // Every rank must publish its record before any constructor unwinds
         // and aborts NCCL or notifies the search-cancellation sideband. Without
@@ -802,9 +809,16 @@ fn admit_device_group(
         // before BFS. No capacity failure or completed layer is claimed.
         return Err("MEMORY_QUERY_DONE".into());
     }
-    let local = check(unsafe { cudaMemGetInfo(&mut free, &mut total) })
-        .and_then(|_| crate::distributed_memory::device_admission(required, reserve,
-            (free as u64 + crate::session_cache::reusable_bytes()+crate::generic_pool::available()?).min(total as u64)));
+    let local = check(unsafe { cudaMemGetInfo(&mut free, &mut total) }).and_then(|_| {
+        crate::distributed_memory::device_admission(
+            required,
+            reserve,
+            (free as u64
+                + crate::session_cache::reusable_bytes()
+                + crate::generic_pool::available()?)
+            .min(total as u64),
+        )
+    });
     if vote(u32::from(local.is_err()))? != 0 {
         return Err(format!(
             "VRAM_PREFLIGHT_GROUP: {}",
@@ -834,7 +848,13 @@ fn setup_failure_vote(
 impl Buffer {
     fn new(bytes: usize, stream: *mut c_void) -> Result<Self> {
         let mut ptr = crate::session_cache::buffer_take(bytes).unwrap_or(std::ptr::null_mut());
-        if ptr.is_null() { if let Some(pooled)=crate::generic_pool::allocate(bytes.max(1))? {ptr=pooled;} else {check(unsafe { cudaMalloc(&mut ptr, bytes.max(1)) })?;} }
+        if ptr.is_null() {
+            if let Some(pooled) = crate::generic_pool::allocate(bytes.max(1))? {
+                ptr = pooled;
+            } else {
+                check(unsafe { cudaMalloc(&mut ptr, bytes.max(1)) })?;
+            }
+        }
         let x = Self { ptr, bytes, stream };
         check(unsafe { cudaMemsetAsync(ptr, 0, bytes.max(1), stream) })?;
         Ok(x)
@@ -891,7 +911,9 @@ impl Buffer {
 impl Drop for Buffer {
     fn drop(&mut self) {
         unsafe {
-            if !crate::session_cache::buffer_put(self.ptr, self.bytes) { cudaFree(self.ptr); }
+            if !crate::session_cache::buffer_put(self.ptr, self.bytes) {
+                cudaFree(self.ptr);
+            }
         }
     }
 }
@@ -1514,7 +1536,9 @@ fn report_cancel_native_site(sample: u32) {
 struct Comm(*mut c_void, bool);
 impl Drop for Comm {
     fn drop(&mut self) {
-        if !self.1 && crate::session_cache::comm_put(self.0) { return; }
+        if !self.1 && crate::session_cache::comm_put(self.0) {
+            return;
+        }
         let _native_scope = NativeCallMarker::enter(line!());
         unsafe {
             if self.1 {
@@ -1645,32 +1669,86 @@ impl HashFirstStorage {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct ShardAbShape { maximum: u32, capacity: u32, slots: u32, forced: Option<u32> }
+struct ShardAbShape {
+    maximum: u32,
+    capacity: u32,
+    slots: u32,
+    forced: Option<u32>,
+}
 impl ShardAbShape {
     fn new(layer_capacity: u32) -> Result<Self> {
         fn setting(name: &str, default: u32) -> Result<u32> {
-            std::env::var(name).ok().map(|v| v.parse::<u32>().map_err(|_| name.to_string()))
-                .transpose().map(|v| v.unwrap_or(default))
+            std::env::var(name)
+                .ok()
+                .map(|v| v.parse::<u32>().map_err(|_| name.to_string()))
+                .transpose()
+                .map(|v| v.unwrap_or(default))
         }
         let target = setting("MGBFS_SHARD_AB_CAPACITY", 1 << 20)?;
-        if target == 0 || !target.is_power_of_two() { return Err("SHARD_AB_CAPACITY".into()); }
-        let minimum = (u64::from(layer_capacity)+255)/256;
-        let capacity = target.min(layer_capacity.max(1).checked_next_power_of_two().ok_or("SHARD_AB_SHAPE")?)
-            .max(u32::try_from(minimum).map_err(|_| "SHARD_AB_SHAPE")?.checked_next_power_of_two().ok_or("SHARD_AB_SHAPE")?);
-        let maximum = ((u64::from(layer_capacity)+u64::from(capacity)-1)/u64::from(capacity)).max(1).next_power_of_two() as u32;
+        if target == 0 || !target.is_power_of_two() {
+            return Err("SHARD_AB_CAPACITY".into());
+        }
+        let minimum = (u64::from(layer_capacity) + 255) / 256;
+        let capacity = target
+            .min(
+                layer_capacity
+                    .max(1)
+                    .checked_next_power_of_two()
+                    .ok_or("SHARD_AB_SHAPE")?,
+            )
+            .max(
+                u32::try_from(minimum)
+                    .map_err(|_| "SHARD_AB_SHAPE")?
+                    .checked_next_power_of_two()
+                    .ok_or("SHARD_AB_SHAPE")?,
+            );
+        let maximum = ((u64::from(layer_capacity) + u64::from(capacity) - 1) / u64::from(capacity))
+            .max(1)
+            .next_power_of_two() as u32;
         let slots = setting("MGBFS_SHARD_AB_SORT_SLOTS", 2)?;
-        if !slots.is_power_of_two() || slots > 32 { return Err("SHARD_AB_SORT_SLOTS".into()); }
-        let forced = std::env::var("MGBFS_SHARD_AB_SHARDS").ok().map(|v| v.parse::<u32>().map_err(|_| "SHARD_AB_SHARDS")).transpose()?;
-        if forced.is_some_and(|n| !n.is_power_of_two() || n > maximum) { return Err("SHARD_AB_SHARDS".into()); }
-        Ok(Self { maximum, capacity, slots, forced })
+        if !slots.is_power_of_two() || slots > 32 {
+            return Err("SHARD_AB_SORT_SLOTS".into());
+        }
+        let forced = std::env::var("MGBFS_SHARD_AB_SHARDS")
+            .ok()
+            .map(|v| v.parse::<u32>().map_err(|_| "SHARD_AB_SHARDS"))
+            .transpose()?;
+        if forced.is_some_and(|n| !n.is_power_of_two() || n > maximum) {
+            return Err("SHARD_AB_SHARDS".into());
+        }
+        Ok(Self {
+            maximum,
+            capacity,
+            slots,
+            forced,
+        })
     }
 }
-struct ShardAbStorage { handle: *mut c_void, shape: ShardAbShape, input_bound: u32, sorted_merge: bool }
+struct ShardAbStorage {
+    handle: *mut c_void,
+    shape: ShardAbShape,
+    input_bound: u32,
+    sorted_merge: bool,
+}
 impl Drop for ShardAbStorage {
-    fn drop(&mut self) { unsafe { mgbfs_shard_ab_pipeline_destroy(self.handle); } }
+    fn drop(&mut self) {
+        unsafe {
+            mgbfs_shard_ab_pipeline_destroy(self.handle);
+        }
+    }
 }
 
-struct ShardKeyFirst { requests: Buffer, received: Buffer, count: Buffer, device_counts: Buffer, source_begin: Buffer, peer_metadata: Buffer, peer_metadata_enabled: bool, combined_status: bool, reuse_preowner_status: bool }
+struct ShardKeyFirst {
+    requests: Buffer,
+    received: Buffer,
+    count: Buffer,
+    device_counts: Buffer,
+    source_begin: Buffer,
+    peer_metadata: Buffer,
+    peer_metadata_enabled: bool,
+    combined_status: bool,
+    reuse_preowner_status: bool,
+}
 pub struct DistributedNativeBfs {
     shard_key_first: Option<ShardKeyFirst>,
     shard_ab: Option<ShardAbStorage>,
@@ -1763,10 +1841,15 @@ impl DistributedNativeBfs {
         (unsafe { mgbfs_nccl_session_park(self.comm.0) }) == 0
     }
     pub fn shard_ab_geometry(&self) -> Option<[u32; 3]> {
-        self.shard_ab.as_ref().map(|ab| [ab.shape.maximum,ab.shape.capacity,ab.shape.slots])
+        self.shard_ab
+            .as_ref()
+            .map(|ab| [ab.shape.maximum, ab.shape.capacity, ab.shape.slots])
     }
     pub fn batch_graph_stats(&self) -> Result<Option<serde_json::Value>> {
-        self.batch_graph.as_ref().map(|graph| graph.stats()).transpose()
+        self.batch_graph
+            .as_ref()
+            .map(|graph| graph.stats())
+            .transpose()
     }
 
     /// StateReady publication on the sole owner stream. No host count/control read.
@@ -2817,8 +2900,11 @@ impl DistributedNativeBfs {
     }
     pub fn new_lrx_multiset_reference_and_cancel(
         word_graph: &mgbfs_core::lrx_multiset::LrxMultiset,
-        seed: [u8; 16], id: [u8; 128], cfg: DistributedConfig,
-        owner: ReferenceOwner, pool_bytes: Option<u64>,
+        seed: [u8; 16],
+        id: [u8; 128],
+        cfg: DistributedConfig,
+        owner: ReferenceOwner,
+        pool_bytes: Option<u64>,
         startup_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
         startup_failure: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
@@ -2826,17 +2912,36 @@ impl DistributedNativeBfs {
             return Err("LRX_MULTISET_REQUIRES_COMPACT_DENSE".into());
         }
         let (native, library) = match (owner, pool_bytes) {
-            (ReferenceOwner::Native(native @ (OwnerBackend::CubSortMerge | OwnerBackend::ShardAb)), None) =>
-                (native, None),
-            (ReferenceOwner::CucoIndexed, Some(bytes)) =>
-                (OwnerBackend::CubSortMerge, Some((bytes, owner))),
-            (ReferenceOwner::CucoRank, Some(bytes)) =>
-                (OwnerBackend::CubSortMerge, Some((bytes, owner))),
+            (
+                ReferenceOwner::Native(
+                    native @ (OwnerBackend::CubSortMerge | OwnerBackend::ShardAb),
+                ),
+                None,
+            ) => (native, None),
+            (ReferenceOwner::CucoIndexed, Some(bytes)) => {
+                (OwnerBackend::CubSortMerge, Some((bytes, owner)))
+            }
+            (ReferenceOwner::CucoRank, Some(bytes)) => {
+                (OwnerBackend::CubSortMerge, Some((bytes, owner)))
+            }
             _ => return Err("LRX_MULTISET_OWNER_CONFIG".into()),
         };
         let graph = word_graph.position_action()?;
-        Self::new_profile(&graph, seed, id, cfg, None, native, 256, false,
-            library, Some(word_graph.start()), startup_cancel, startup_failure, None)
+        Self::new_profile(
+            &graph,
+            seed,
+            id,
+            cfg,
+            None,
+            native,
+            256,
+            false,
+            library,
+            Some(word_graph.start()),
+            startup_cancel,
+            startup_failure,
+            None,
+        )
     }
     pub(crate) fn new_weighted_with_owner_and_cancel(
         graph: &MatrixGroup,
@@ -2889,18 +2994,31 @@ impl DistributedNativeBfs {
         macro_operators: Option<&mgbfs_core::macro_generators::MacroGeneratorSet>,
     ) -> Result<Self> {
         let _native_scope = NativeCallMarker::enter(line!());
-        let shard_key_first_enabled = std::env::var("MGBFS_SHARD_AB_KEY_FIRST").ok().as_deref()==Some("1");
-        if shard_key_first_enabled && (owner_backend!=OwnerBackend::ShardAb || cfg.generation_variant!=5 || cfg.world>8) {
+        let shard_key_first_enabled =
+            std::env::var("MGBFS_SHARD_AB_KEY_FIRST").ok().as_deref() == Some("1");
+        if shard_key_first_enabled
+            && (owner_backend != OwnerBackend::ShardAb
+                || cfg.generation_variant != 5
+                || cfg.world > 8)
+        {
             return Err("SHARD_KEY_FIRST_REQUIRES_COMPACT_NATIVE".into());
         }
-        let compact_direct_enabled=std::env::var("MGBFS_COMPACT_DIRECT_HASH").ok().as_deref()==Some("1");
-        if compact_direct_enabled && !shard_key_first_enabled { return Err("COMPACT_DIRECT_REQUIRES_KEY_FIRST".into()); }
+        let compact_direct_enabled =
+            std::env::var("MGBFS_COMPACT_DIRECT_HASH").ok().as_deref() == Some("1");
+        if compact_direct_enabled && !shard_key_first_enabled {
+            return Err("COMPACT_DIRECT_REQUIRES_KEY_FIRST".into());
+        }
         let ab_shape = if owner_backend == OwnerBackend::ShardAb {
-            if library_options.is_some() || materialization_capacity.is_some() || macro_operators.is_some() {
+            if library_options.is_some()
+                || materialization_capacity.is_some()
+                || macro_operators.is_some()
+            {
                 return Err("SHARD_AB_REQUIRES_DENSE_NATIVE".into());
             }
             Some(ShardAbShape::new(cfg.layer_capacity)?)
-        } else { None };
+        } else {
+            None
+        };
 
         if macro_operators.is_some() && materialization_capacity.is_some() {
             return Err("WEIGHTED_HASH_FIRST_NOT_READY".into());
@@ -2915,8 +3033,16 @@ impl DistributedNativeBfs {
         if cfg.state_descriptor_capacity == 0 {
             return Err("STATE_DESCRIPTOR_CAPACITY".into());
         }
-        let epoch_window = if ab_shape.is_some() { crate::reference_launch::inflight_batches(std::env::var("MGBFS_INFLIGHT_BATCHES").ok().as_deref())? } else { cfg.epoch_window };
-        if ab_shape.is_some() { cfg.route_banks = 1; }
+        let epoch_window = if ab_shape.is_some() {
+            crate::reference_launch::inflight_batches(
+                std::env::var("MGBFS_INFLIGHT_BATCHES").ok().as_deref(),
+            )?
+        } else {
+            cfg.epoch_window
+        };
+        if ab_shape.is_some() {
+            cfg.route_banks = 1;
+        }
         if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa
             && (cfg.world == 0
                 || matches!(library_options, Some((_, owner)) if owner != ReferenceOwner::CucoRank))
@@ -2971,12 +3097,19 @@ impl DistributedNativeBfs {
         cfg.buckets = local_buckets;
         cfg.shards = local_shards;
         let requested_local = match std::env::var("LOCAL_RANK") {
-            Ok(value) => Some(value.parse::<u32>().map_err(|_| "DEVICE_PLACEMENT_ORDINAL")?),
+            Ok(value) => Some(
+                value
+                    .parse::<u32>()
+                    .map_err(|_| "DEVICE_PLACEMENT_ORDINAL")?,
+            ),
             Err(std::env::VarError::NotPresent) => None,
             Err(_) => return Err("DEVICE_PLACEMENT_ORDINAL".into()),
         };
-        let local_device = crate::topology::reference_local_device(cfg.rank,cfg.world,requested_local)?;
-        check(observed_native!(unsafe { cudaSetDevice(local_device as i32) }))?;
+        let local_device =
+            crate::topology::reference_local_device(cfg.rank, cfg.world, requested_local)?;
+        check(observed_native!(unsafe {
+            cudaSetDevice(local_device as i32)
+        }))?;
         #[cfg(target_os = "linux")]
         crate::cuda_loading::verify_driver_before_allocations()?;
         if hash_first_tensor_generation {
@@ -3012,13 +3145,21 @@ impl DistributedNativeBfs {
             graph.start.clone()
         };
         let width = start_state.len();
-        let lossless_bits = if std::env::var("MGBFS_EXACT_PACKED_KEYS").ok().as_deref()==Some("1") {
-            if !compact_direct_enabled || owner_backend!=OwnerBackend::ShardAb || permutation_n.is_none(){return Err("LOSSLESS_KEYS_REQUIRE_COMPACT_PERMUTATION_SHARD_AB".into());}
-            let maximum=*start_state.iter().max().ok_or("LOSSLESS_KEY_DOMAIN")?;
-            let bits=(8-maximum.leading_zeros()).max(1);
-            mgbfs_core::lossless_key::pack(&start_state,bits)?;
+        let lossless_bits = if std::env::var("MGBFS_EXACT_PACKED_KEYS").ok().as_deref() == Some("1")
+        {
+            if !compact_direct_enabled
+                || owner_backend != OwnerBackend::ShardAb
+                || permutation_n.is_none()
+            {
+                return Err("LOSSLESS_KEYS_REQUIRE_COMPACT_PERMUTATION_SHARD_AB".into());
+            }
+            let maximum = *start_state.iter().max().ok_or("LOSSLESS_KEY_DOMAIN")?;
+            let bits = (8 - maximum.leading_zeros()).max(1);
+            mgbfs_core::lossless_key::pack(&start_state, bits)?;
             Some(bits)
-        } else {None};
+        } else {
+            None
+        };
         let stride = (width + 15) & !15;
         let moves = u32::try_from(macro_operators.map_or(graph.generators.len(), |schedule| {
             schedule.transitions.len()
@@ -3051,20 +3192,31 @@ impl DistributedNativeBfs {
         };
         #[cfg(feature = "library-owner")]
         if std::env::var("MGBFS_LIBRARY_POOL_AUTOSIZE").ok().as_deref() == Some("1") {
-            if macro_operators.is_some() || !matches!(library_options, Some((_, ReferenceOwner::CucoRank))) {
+            if macro_operators.is_some()
+                || !matches!(library_options, Some((_, ReferenceOwner::CucoRank)))
+            {
                 return Err("POOL_AUTOSIZE_REQUIRES_CUCO_RANK".into());
             }
-            let capacity = (u64::from(cfg.buckets / cfg.shards)
-                * u64::from(cfg.bucket_capacity)).min(cfg.layer_capacity.into());
+            let capacity = (u64::from(cfg.buckets / cfg.shards) * u64::from(cfg.bucket_capacity))
+                .min(cfg.layer_capacity.into());
             let mut rounded = 0u64;
-            check(unsafe { mgbfs_library_rank_pool_query_v1(
-                cfg.layer_capacity, capacity as u32, cfg.shards, candidates, &mut rounded,
-            ) })?;
+            check(unsafe {
+                mgbfs_library_rank_pool_query_v1(
+                    cfg.layer_capacity,
+                    capacity as u32,
+                    cfg.shards,
+                    candidates,
+                    &mut rounded,
+                )
+            })?;
             // Fragmentation remains explicitly reserved until hardware peak
             // measurements justify tightening it. No allocation growth in BFS.
             let slack = (64u64 << 20).max(rounded / 20);
-            let bytes = rounded.checked_add(slack).and_then(|x| x.checked_add(255))
-                .ok_or("POOL_AUTOSIZE_OVERFLOW")? & !255;
+            let bytes = rounded
+                .checked_add(slack)
+                .and_then(|x| x.checked_add(255))
+                .ok_or("POOL_AUTOSIZE_OVERFLOW")?
+                & !255;
             library_pool_bytes = Some(bytes);
         }
         let shared_shape = crate::distributed_memory::SharedBufferShape {
@@ -3092,7 +3244,10 @@ impl DistributedNativeBfs {
             0
         };
         let shared_memory = if ab_shape.is_some() {
-            crate::distributed_memory::shard_ab_shared_buffers(shared_shape, cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa)?
+            crate::distributed_memory::shard_ab_shared_buffers(
+                shared_shape,
+                cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa,
+            )?
         } else if library_pool_bytes.is_some() {
             crate::distributed_memory::library_shared_buffers_for_transport(
                 shared_shape,
@@ -3107,8 +3262,11 @@ impl DistributedNativeBfs {
         } else {
             crate::distributed_memory::shared_buffers(shared_shape)?
         };
-        let mut shared_memory =
-            if ab_shape.is_some() { crate::distributed_memory::with_compact_route_bank(&shared_memory)? } else { crate::distributed_memory::with_route_banks(&shared_memory, cfg.route_banks)? };
+        let mut shared_memory = if ab_shape.is_some() {
+            crate::distributed_memory::with_compact_route_bank(&shared_memory)?
+        } else {
+            crate::distributed_memory::with_route_banks(&shared_memory, cfg.route_banks)?
+        };
         if weighted_target_slots != 0 {
             // Reuse the admitted owner buffers as flat K-target arrays. There
             // is still one StateRing and one owner scratch, not K state arenas.
@@ -3237,7 +3395,12 @@ impl DistributedNativeBfs {
             owned_memory.add("shard_key_first.requests", u64::from(candidates), 4, 256)?;
             owned_memory.add("shard_key_first.received", u64::from(candidates), 4, 256)?;
             owned_memory.add("shard_key_first.count", 1, 4, 256)?;
-            owned_memory.add("shard_key_first.device_counts", u64::from(cfg.world), 4, 256)?;
+            owned_memory.add(
+                "shard_key_first.device_counts",
+                u64::from(cfg.world),
+                4,
+                256,
+            )?;
             owned_memory.add("shard_key_first.source_begin", 1, 4, 256)?;
             owned_memory.add("shard_key_first.peer_metadata", 4, 4, 256)?;
         }
@@ -3277,52 +3440,74 @@ impl DistributedNativeBfs {
             Some(l)
         } else {
             if compact_direct_enabled {
-                let mut bytes=0;check(unsafe{mgbfs_compact_map_query(width as u32,moves,cfg.batch,&mut bytes)})?;
-                owned_memory.add("generation.compact_map",bytes,1,256)?;
-            }else{
-            append_query(
-                &mut owned_memory,
-                "generation",
-                &query_generation(
-                    graph.rows as u32,
-                    moves,
-                    graph.modulus as u32,
-                    cfg.batch,
-                    cfg.generation_variant,
-                )?,
-            )?;
+                let mut bytes = 0;
+                check(unsafe {
+                    mgbfs_compact_map_query(width as u32, moves, cfg.batch, &mut bytes)
+                })?;
+                owned_memory.add("generation.compact_map", bytes, 1, 256)?;
+            } else {
+                append_query(
+                    &mut owned_memory,
+                    "generation",
+                    &query_generation(
+                        graph.rows as u32,
+                        moves,
+                        graph.modulus as u32,
+                        cfg.batch,
+                        cfg.generation_variant,
+                    )?,
+                )?;
             }
             if compact_direct_enabled {
-                if lossless_bits.is_some(){owned_memory.add("compact_direct.lossless_permutation",width as u64*u64::from(moves),1,256)?;}else{
-                let mut bytes=0;check(unsafe{mgbfs_compact_hash_query(width as u32,moves,cfg.batch,&mut bytes)})?;
-                let weights=u64::from(moves)*16*stride as u64;
-                let partials=u64::from(cfg.batch)*u64::from(moves)*64;
-                if bytes!=weights+16+partials{return Err("COMPACT_DIRECT_LEDGER".into());}
-                owned_memory.add("compact_direct.weights",weights,1,256)?;
-                owned_memory.add("compact_direct.offsets",16,1,256)?;
-                owned_memory.add("compact_direct.partials",partials,1,256)?;
+                if lossless_bits.is_some() {
+                    owned_memory.add(
+                        "compact_direct.lossless_permutation",
+                        width as u64 * u64::from(moves),
+                        1,
+                        256,
+                    )?;
+                } else {
+                    let mut bytes = 0;
+                    check(unsafe {
+                        mgbfs_compact_hash_query(width as u32, moves, cfg.batch, &mut bytes)
+                    })?;
+                    let weights = u64::from(moves) * 16 * stride as u64;
+                    let partials = u64::from(cfg.batch) * u64::from(moves) * 64;
+                    if bytes != weights + 16 + partials {
+                        return Err("COMPACT_DIRECT_LEDGER".into());
+                    }
+                    owned_memory.add("compact_direct.weights", weights, 1, 256)?;
+                    owned_memory.add("compact_direct.offsets", 16, 1, 256)?;
+                    owned_memory.add("compact_direct.partials", partials, 1, 256)?;
                 }
             } else {
-            append_query(
-                &mut owned_memory,
-                "hash",
-                &query_hash(width as u32, candidates)?,
-            )?;
+                append_query(
+                    &mut owned_memory,
+                    "hash",
+                    &query_hash(width as u32, candidates)?,
+                )?;
             }
             None
         };
-if lossless_bits.is_none(){
-        append_query(
-            &mut owned_memory,
-            "archive_hash",
-            &query_hash(width as u32, cfg.batch)?,
-        )?;
+        if lossless_bits.is_none() {
+            append_query(
+                &mut owned_memory,
+                "archive_hash",
+                &query_hash(width as u32, cfg.batch)?,
+            )?;
         }
         append_query(&mut owned_memory, "route", &query_route(candidates)?)?;
         if let Some(shape) = ab_shape {
             let mut bytes = 0;
-            check(unsafe { mgbfs_shard_ab_indexed_query(shape.maximum, shape.capacity,
-                stride as u32, shape.slots, &mut bytes) })?;
+            check(unsafe {
+                mgbfs_shard_ab_indexed_query(
+                    shape.maximum,
+                    shape.capacity,
+                    stride as u32,
+                    shape.slots,
+                    &mut bytes,
+                )
+            })?;
             owned_memory.add("owner.shard_ab.fixed_payload", bytes, 1, 256)?;
         } else if let Some(bytes) = library_pool_bytes {
             owned_memory.add("library.fixed_pool", bytes, 1, 256)?;
@@ -3387,12 +3572,19 @@ if lossless_bits.is_none(){
         let archive_stream = Stream(raw_archive);
         let mut comm = if cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa {
             crate::session_cache::comm_take().unwrap_or(std::ptr::null_mut())
-        } else { std::ptr::null_mut() };
+        } else {
+            std::ptr::null_mut()
+        };
         let mut error = [0i8; 512];
         if !comm.is_null() {
             if let Some(token) = &startup_cancel {
-                check(unsafe { mgbfs_nccl_bind_cancel(comm, Some(nccl_cancel_probe),
-                    std::sync::Arc::as_ptr(token).cast_mut().cast()) })?;
+                check(unsafe {
+                    mgbfs_nccl_bind_cancel(
+                        comm,
+                        Some(nccl_cancel_probe),
+                        std::sync::Arc::as_ptr(token).cast_mut().cast(),
+                    )
+                })?;
             }
         } else if unsafe {
             mgbfs_nccl_create_with_cancel(
@@ -3403,9 +3595,14 @@ if lossless_bits.is_none(){
                 &mut comm,
                 error.as_mut_ptr(),
                 512,
-                startup_cancel.as_ref().map(|_| nccl_cancel_probe as extern "C" fn(*mut c_void) -> i32),
-                startup_cancel.as_ref().map_or(std::ptr::null_mut(), |token|
-                    std::sync::Arc::as_ptr(token).cast_mut().cast()),
+                startup_cancel
+                    .as_ref()
+                    .map(|_| nccl_cancel_probe as extern "C" fn(*mut c_void) -> i32),
+                startup_cancel
+                    .as_ref()
+                    .map_or(std::ptr::null_mut(), |token| {
+                        std::sync::Arc::as_ptr(token).cast_mut().cast()
+                    }),
             )
         } != 0
         {
@@ -3438,7 +3635,8 @@ if lossless_bits.is_none(){
             owned_memory.total(),
             cfg.untouched_vram_reserve,
             startup_cancel.as_deref(),
-        ).map_err(|error| {
+        )
+        .map_err(|error| {
             if error == "MEMORY_QUERY_DONE" {
                 // Admission completed its all-rank query rendezvous. Suppress
                 // the constructor failure guard for this intentional exit.
@@ -3563,52 +3761,91 @@ if lossless_bits.is_none(){
                         .collect()
                 },
             );
-        let generate = if materialization_capacity.is_some() {
-            None
-        } else if compact_direct_enabled {
-            let mut permutation=Vec::new();
-            for generator in &graph.generators {permutation.extend(encode_permutation_matrix(generator,graph.rows)?);}
-            Some(Plan::new(mgbfs_generate_destroy,|out,e|unsafe{mgbfs_compact_map_create(width as u32,moves,cfg.batch,permutation.as_ptr(),out,e,512)})?)
-        } else {
-            Some(Plan::new(mgbfs_generate_destroy, |out, e| unsafe {
-                mgbfs_generate_create_macro_variant(
-                    graph.rows as u32,
-                    moves,
-                    graph.modulus as u32,
-                    cfg.batch,
-                    matrices.as_ptr(),
-                    weights.as_ptr(),
-                    cfg.generation_variant,
-                    out,
-                    e,
-                    512,
-                )
-            })?)
-        };
-        let compact_direct_hash=if compact_direct_enabled {
-            let mut permutation=Vec::new();
-            for generator in &graph.generators {permutation.extend(encode_permutation_matrix(generator,graph.rows)?);}
-            Some(Plan::new(mgbfs_compact_hash_destroy,|out,e|unsafe{
-                if let Some(bits)=lossless_bits {mgbfs_lossless_compact_hash_create(width as u32,moves,cfg.batch,permutation.as_ptr(),bits,1,out,e,512)}else{
-                mgbfs_compact_hash_create(width as u32,moves,cfg.batch,permutation.as_ptr(),limbs.as_ptr(),contract.offsets.as_ptr(),1,out,e,512)
+            let generate = if materialization_capacity.is_some() {
+                None
+            } else if compact_direct_enabled {
+                let mut permutation = Vec::new();
+                for generator in &graph.generators {
+                    permutation.extend(encode_permutation_matrix(generator, graph.rows)?);
                 }
-            })?)
-        }else{None};
-        let hash = if materialization_capacity.is_some() || compact_direct_enabled {
-            None
-        } else {
-            Some(Plan::new(mgbfs_hash_destroy, |out, e| unsafe {
-                mgbfs_hash_create(
-                    width as u32,
-                    candidates,
-                    limbs.as_ptr(),
-                    contract.offsets.as_ptr(),
-                    out,
-                    e,
-                    512,
-                )
-            })?)
-        };
+                Some(Plan::new(mgbfs_generate_destroy, |out, e| unsafe {
+                    mgbfs_compact_map_create(
+                        width as u32,
+                        moves,
+                        cfg.batch,
+                        permutation.as_ptr(),
+                        out,
+                        e,
+                        512,
+                    )
+                })?)
+            } else {
+                Some(Plan::new(mgbfs_generate_destroy, |out, e| unsafe {
+                    mgbfs_generate_create_macro_variant(
+                        graph.rows as u32,
+                        moves,
+                        graph.modulus as u32,
+                        cfg.batch,
+                        matrices.as_ptr(),
+                        weights.as_ptr(),
+                        cfg.generation_variant,
+                        out,
+                        e,
+                        512,
+                    )
+                })?)
+            };
+            let compact_direct_hash = if compact_direct_enabled {
+                let mut permutation = Vec::new();
+                for generator in &graph.generators {
+                    permutation.extend(encode_permutation_matrix(generator, graph.rows)?);
+                }
+                Some(Plan::new(mgbfs_compact_hash_destroy, |out, e| unsafe {
+                    if let Some(bits) = lossless_bits {
+                        mgbfs_lossless_compact_hash_create(
+                            width as u32,
+                            moves,
+                            cfg.batch,
+                            permutation.as_ptr(),
+                            bits,
+                            1,
+                            out,
+                            e,
+                            512,
+                        )
+                    } else {
+                        mgbfs_compact_hash_create(
+                            width as u32,
+                            moves,
+                            cfg.batch,
+                            permutation.as_ptr(),
+                            limbs.as_ptr(),
+                            contract.offsets.as_ptr(),
+                            1,
+                            out,
+                            e,
+                            512,
+                        )
+                    }
+                })?)
+            } else {
+                None
+            };
+            let hash = if materialization_capacity.is_some() || compact_direct_enabled {
+                None
+            } else {
+                Some(Plan::new(mgbfs_hash_destroy, |out, e| unsafe {
+                    mgbfs_hash_create(
+                        width as u32,
+                        candidates,
+                        limbs.as_ptr(),
+                        contract.offsets.as_ptr(),
+                        out,
+                        e,
+                        512,
+                    )
+                })?)
+            };
             let hash_first = materialization_capacity
                 .zip(hash_first_ledger)
                 .map(|(capacity, ledger)| {
@@ -3627,16 +3864,18 @@ if lossless_bits.is_none(){
                 mgbfs_route_create(candidates, out, e, 512)
             })?;
             let archive_hash = Plan::new(mgbfs_hash_destroy, |out, e| unsafe {
-                if let Some(bits)=lossless_bits {mgbfs_lossless_hash_create(width as u32,cfg.batch,bits,out,e,512)}else{
-                mgbfs_hash_create(
-                    width as u32,
-                    cfg.batch,
-                    limbs.as_ptr(),
-                    contract.offsets.as_ptr(),
-                    out,
-                    e,
-                    512,
-                )
+                if let Some(bits) = lossless_bits {
+                    mgbfs_lossless_hash_create(width as u32, cfg.batch, bits, out, e, 512)
+                } else {
+                    mgbfs_hash_create(
+                        width as u32,
+                        cfg.batch,
+                        limbs.as_ptr(),
+                        contract.offsets.as_ptr(),
+                        out,
+                        e,
+                        512,
+                    )
                 }
             })?;
             let owner = if library_pool_bytes.is_some() || ab_shape.is_some() {
@@ -3651,7 +3890,7 @@ if lossless_bits.is_none(){
                             out,
                         ),
                         OwnerBackend::ShardAb => return 1,
-                    OwnerBackend::BmmaBucket => mgbfs_bounded_owner_create_backend(
+                        OwnerBackend::BmmaBucket => mgbfs_bounded_owner_create_backend(
                             candidates,
                             cfg.job_buckets,
                             cfg.bucket_capacity,
@@ -3680,17 +3919,39 @@ if lossless_bits.is_none(){
                 } else {
                     (None, None)
                 };
-        let shard_ab = if let Some(shape) = ab_shape {
-            let mut handle = std::ptr::null_mut();
-            check(unsafe { mgbfs_shard_ab_indexed_create(shape.maximum, shape.capacity,
-                stride as u32, shape.slots, raw, &mut handle) })?;
-            if handle.is_null() { return Err("SHARD_AB_CREATE_NULL".into()); }
-            Some(ShardAbStorage { handle, shape, input_bound: candidates, sorted_merge: std::env::var("MGBFS_SHARD_AB_DEDUP").ok().as_deref()==Some("SORT_MERGE") })
-        } else { None };
+            let shard_ab = if let Some(shape) = ab_shape {
+                let mut handle = std::ptr::null_mut();
+                check(unsafe {
+                    mgbfs_shard_ab_indexed_create(
+                        shape.maximum,
+                        shape.capacity,
+                        stride as u32,
+                        shape.slots,
+                        raw,
+                        &mut handle,
+                    )
+                })?;
+                if handle.is_null() {
+                    return Err("SHARD_AB_CREATE_NULL".into());
+                }
+                Some(ShardAbStorage {
+                    handle,
+                    shape,
+                    input_bound: candidates,
+                    sorted_merge: std::env::var("MGBFS_SHARD_AB_DEDUP").ok().as_deref()
+                        == Some("SORT_MERGE"),
+                })
+            } else {
+                None
+            };
             let states = b("states")?;
             let prev = b("prev")?;
             let curr = b("curr")?;
-            let start_hash = if let Some(bits)=lossless_bits {mgbfs_core::lossless_key::pack(&start_state,bits)?}else{contract.hash(&start_state)?};
+            let start_hash = if let Some(bits) = lossless_bits {
+                mgbfs_core::lossless_key::pack(&start_state, bits)?
+            } else {
+                contract.hash(&start_state)?
+            };
             let start_owner = crate::topology::hash_owner(cfg.world, start_hash.0[3])?;
             let start_rank = cfg.logical_owner_to_rank[start_owner];
             let current_count = (start_rank == cfg.rank) as u32;
@@ -3871,18 +4132,43 @@ if lossless_bits.is_none(){
                 .map_err(|_| "ROUTE_PREFETCH_HOST_CAPACITY")?;
             let mut result = Self {
                 owner_graph_replay: None,
-            shard_key_first: if shard_key_first_enabled {Some(ShardKeyFirst {
-                requests: Buffer::new(candidates as usize*4,raw)?,
-                received: Buffer::new(candidates as usize*4,raw)?, count: Buffer::new(4,raw)?,
-                device_counts: Buffer::new(cfg.world as usize*4,raw)?, source_begin: Buffer::new(4,raw)?,
-                peer_metadata: Buffer::new(16,raw)?,
-                peer_metadata_enabled: std::env::var("MGBFS_SHARD_AB_PEER_METADATA").ok().as_deref()==Some("1"),
-                combined_status: cfg.world==2 && std::env::var("MGBFS_SHARD_AB_COMBINED_STATUS").ok().as_deref()==Some("1"),
-                reuse_preowner_status: cfg.world==2 && std::env::var("MGBFS_SHARD_AB_PEER_METADATA").ok().as_deref()==Some("1") && std::env::var("MGBFS_SHARD_AB_REUSE_PREOWNER_STATUS").ok().as_deref()==Some("1"),
-            })} else {None},
+                shard_key_first: if shard_key_first_enabled {
+                    Some(ShardKeyFirst {
+                        requests: Buffer::new(candidates as usize * 4, raw)?,
+                        received: Buffer::new(candidates as usize * 4, raw)?,
+                        count: Buffer::new(4, raw)?,
+                        device_counts: Buffer::new(cfg.world as usize * 4, raw)?,
+                        source_begin: Buffer::new(4, raw)?,
+                        peer_metadata: Buffer::new(16, raw)?,
+                        peer_metadata_enabled: std::env::var("MGBFS_SHARD_AB_PEER_METADATA")
+                            .ok()
+                            .as_deref()
+                            == Some("1"),
+                        combined_status: cfg.world == 2
+                            && std::env::var("MGBFS_SHARD_AB_COMBINED_STATUS")
+                                .ok()
+                                .as_deref()
+                                == Some("1"),
+                        reuse_preowner_status: cfg.world == 2
+                            && std::env::var("MGBFS_SHARD_AB_PEER_METADATA")
+                                .ok()
+                                .as_deref()
+                                == Some("1")
+                            && std::env::var("MGBFS_SHARD_AB_REUSE_PREOWNER_STATUS")
+                                .ok()
+                                .as_deref()
+                                == Some("1"),
+                    })
+                } else {
+                    None
+                },
 
                 shard_ab,
-                batch_graph: (crate::reference_launch::graph_batches(std::env::var("MGBFS_CUDA_GRAPH_BATCHES").ok().as_deref())? != 0).then(crate::batch_graph::BatchGraph::new).transpose()?,
+                batch_graph: (crate::reference_launch::graph_batches(
+                    std::env::var("MGBFS_CUDA_GRAPH_BATCHES").ok().as_deref(),
+                )? != 0)
+                    .then(crate::batch_graph::BatchGraph::new)
+                    .transpose()?,
                 #[cfg(feature = "library-owner")]
                 library_owner: None,
                 cfg: cfg.clone(),
@@ -3949,7 +4235,10 @@ if lossless_bits.is_none(){
                 prefetched,
                 archive_hashes: b("archive_hashes")?,
                 archive_states: b("archive_states")?,
-                owner_window: if library_pool_bytes.is_some() || native_rank_mode || ab_shape.is_some() {
+                owner_window: if library_pool_bytes.is_some()
+                    || native_rank_mode
+                    || ab_shape.is_some()
+                {
                     Some(b("owner_window")?)
                 } else {
                     None
@@ -4027,10 +4316,17 @@ if lossless_bits.is_none(){
                     raw,
                 )?;
                 let control_transfer = unsafe { ControlTransfer::new(raw)? };
-                let mut pool = crate::session_cache::pool_take(pool_bytes).unwrap_or(std::ptr::null_mut());
-                if pool.is_null() { check(observed_native!(unsafe {
-                    mgbfs_library_pool_create_v1(pool_bytes, cfg.untouched_vram_reserve, &mut pool)
-                }))?; }
+                let mut pool =
+                    crate::session_cache::pool_take(pool_bytes).unwrap_or(std::ptr::null_mut());
+                if pool.is_null() {
+                    check(observed_native!(unsafe {
+                        mgbfs_library_pool_create_v1(
+                            pool_bytes,
+                            cfg.untouched_vram_reserve,
+                            &mut pool,
+                        )
+                    }))?;
+                }
                 let per_shard = cfg.buckets / cfg.shards;
                 let capacity = u32::try_from(
                     (u64::from(per_shard) * u64::from(cfg.bucket_capacity))
@@ -4562,7 +4858,9 @@ if lossless_bits.is_none(){
         *produced = produced.checked_add(1).ok_or("GENERATION_ROUTE_SEQUENCE")?;
         Ok(true)
     }
-    pub fn boundary_job_stop(&self,value:u32)->Result<u32>{self.all_max(value)}
+    pub fn boundary_job_stop(&self, value: u32) -> Result<u32> {
+        self.all_max(value)
+    }
     fn all_max(&self, value: u32) -> Result<u32> {
         let _native_scope = NativeCallMarker::enter(line!());
         self.collective_send.put_u32(value)?;
@@ -5753,132 +6051,438 @@ if lossless_bits.is_none(){
         }
         Ok(())
     }
-    fn materialize_shard_selected_device(&self,parent:Option<Extent>,offset:u64,parents:u32,round:u32,group:usize)->Result<()> {
-        let h=self.shard_key_first.as_ref().ok_or("SHARD_KEY_FIRST_STORAGE")?;let ab=self.shard_ab.as_ref().ok_or("SHARD_AB_MISSING")?;
-        let view=self.lsa_view.ok_or("LSA_VIEW")?;let s=self.stream.0;let physical=parent.map_or(0,|e|e.begin+offset);
-        let fatal=unsafe{self.ring.at(48).cast::<u32>()};let peer=self.cfg.rank^round;
-        let gate=||->Result<()>{check(unsafe{mgbfs_owner_lsa_fatal_gate(self.comm.0,self.ring.ptr.cast(),self.control.ptr.cast(),self.collective_send.ptr.cast(),self.collective_recv.ptr.cast(),s)})};
-        let import=|word|->Result<()>{check(unsafe{mgbfs_owner_import_transport_fatal(word,self.ring.ptr.cast(),self.control.ptr.cast(),s)})};
-        check(unsafe{mgbfs_shard_ab_pipeline_row_requests(ab.handle,h.requests.ptr.cast(),h.count.ptr.cast(),self.candidates)})?;gate()?;
-        let responses=if group==0 {
-            check(unsafe{mgbfs_generate_selected_compact(self.generate.as_ref().ok_or("GENERATION_PLAN")?.0,self.states.at(physical as usize*self.stride).cast(),parents,self.route_banks[0].sorted_refs.ptr.cast(),0,self.candidates,h.requests.ptr.cast(),h.count.ptr.cast(),self.candidates,self.route_banks[0].packed_states.ptr.cast(),fatal,s)})?;
+    fn materialize_shard_selected_device(
+        &self,
+        parent: Option<Extent>,
+        offset: u64,
+        parents: u32,
+        round: u32,
+        group: usize,
+    ) -> Result<()> {
+        let h = self
+            .shard_key_first
+            .as_ref()
+            .ok_or("SHARD_KEY_FIRST_STORAGE")?;
+        let ab = self.shard_ab.as_ref().ok_or("SHARD_AB_MISSING")?;
+        let view = self.lsa_view.ok_or("LSA_VIEW")?;
+        let s = self.stream.0;
+        let physical = parent.map_or(0, |e| e.begin + offset);
+        let fatal = unsafe { self.ring.at(48).cast::<u32>() };
+        let peer = self.cfg.rank ^ round;
+        let gate = || -> Result<()> {
+            check(unsafe {
+                mgbfs_owner_lsa_fatal_gate(
+                    self.comm.0,
+                    self.ring.ptr.cast(),
+                    self.control.ptr.cast(),
+                    self.collective_send.ptr.cast(),
+                    self.collective_recv.ptr.cast(),
+                    s,
+                )
+            })
+        };
+        let import = |word| -> Result<()> {
+            check(unsafe {
+                mgbfs_owner_import_transport_fatal(
+                    word,
+                    self.ring.ptr.cast(),
+                    self.control.ptr.cast(),
+                    s,
+                )
+            })
+        };
+        check(unsafe {
+            mgbfs_shard_ab_pipeline_row_requests(
+                ab.handle,
+                h.requests.ptr.cast(),
+                h.count.ptr.cast(),
+                self.candidates,
+            )
+        })?;
+        gate()?;
+        let responses = if group == 0 {
+            check(unsafe {
+                mgbfs_generate_selected_compact(
+                    self.generate.as_ref().ok_or("GENERATION_PLAN")?.0,
+                    self.states.at(physical as usize * self.stride).cast(),
+                    parents,
+                    self.route_banks[0].sorted_refs.ptr.cast(),
+                    0,
+                    self.candidates,
+                    h.requests.ptr.cast(),
+                    h.count.ptr.cast(),
+                    self.candidates,
+                    self.route_banks[0].packed_states.ptr.cast(),
+                    fatal,
+                    s,
+                )
+            })?;
             self.route_banks[0].packed_states.ptr
-        }else{
-            let logical_peer=self.cfg.logical_owner_to_rank.iter().position(|&rank|rank==peer).ok_or("OWNER_MAP")?;
-            unsafe{check(cudaMemsetAsync(h.device_counts.ptr,0,self.cfg.world as usize*4,s))?;check(cudaMemcpyAsync(h.device_counts.at(logical_peer*4),h.count.ptr,4,3,s))?;}
-            check(unsafe{mgbfs_nccl_lsa_exchange_rows(self.comm.0,std::ptr::null(),h.requests.ptr,h.device_counts.ptr.cast(),self.collective_recv.ptr.cast(),logical_peer as u32,peer,4,s)})?;import(view.fatal)?;gate()?;
-            check(unsafe{mgbfs_owner_window_from_counts(self.cfg.world,self.candidates,logical_peer as u32,self.route_banks[0].owner_counts.ptr.cast(),self.route_banks[0].route_count.ptr.cast(),h.source_begin.ptr.cast(),self.collective_send.ptr.cast(),s)})?;
-            check(unsafe{mgbfs_generate_selected_compact_device_base(self.generate.as_ref().ok_or("GENERATION_PLAN")?.0,self.states.at(physical as usize*self.stride).cast(),parents,self.route_banks[0].sorted_refs.ptr.cast(),h.source_begin.ptr.cast(),self.candidates,view.states.cast(),view.count,self.candidates,self.route_banks[0].packed_states.ptr.cast(),fatal,s)})?;
-            // Snapshot incoming count before the response exchange overwrites view.
-            unsafe{check(cudaMemsetAsync(h.device_counts.ptr,0,self.cfg.world as usize*4,s))?;check(cudaMemcpyAsync(h.device_counts.at(logical_peer*4),view.count.cast(),4,3,s))?;}
+        } else {
+            let logical_peer = self
+                .cfg
+                .logical_owner_to_rank
+                .iter()
+                .position(|&rank| rank == peer)
+                .ok_or("OWNER_MAP")?;
+            unsafe {
+                check(cudaMemsetAsync(
+                    h.device_counts.ptr,
+                    0,
+                    self.cfg.world as usize * 4,
+                    s,
+                ))?;
+                check(cudaMemcpyAsync(
+                    h.device_counts.at(logical_peer * 4),
+                    h.count.ptr,
+                    4,
+                    3,
+                    s,
+                ))?;
+            }
+            check(unsafe {
+                mgbfs_nccl_lsa_exchange_rows(
+                    self.comm.0,
+                    std::ptr::null(),
+                    h.requests.ptr,
+                    h.device_counts.ptr.cast(),
+                    self.collective_recv.ptr.cast(),
+                    logical_peer as u32,
+                    peer,
+                    4,
+                    s,
+                )
+            })?;
+            import(view.fatal)?;
             gate()?;
-            check(unsafe{mgbfs_nccl_lsa_exchange_rows(self.comm.0,std::ptr::null(),self.route_banks[0].packed_states.ptr,h.device_counts.ptr.cast(),self.collective_recv.ptr.cast(),logical_peer as u32,peer,self.stride as u32,s)})?;import(view.fatal)?;gate()?;
+            check(unsafe {
+                mgbfs_owner_window_from_counts(
+                    self.cfg.world,
+                    self.candidates,
+                    logical_peer as u32,
+                    self.route_banks[0].owner_counts.ptr.cast(),
+                    self.route_banks[0].route_count.ptr.cast(),
+                    h.source_begin.ptr.cast(),
+                    self.collective_send.ptr.cast(),
+                    s,
+                )
+            })?;
+            check(unsafe {
+                mgbfs_generate_selected_compact_device_base(
+                    self.generate.as_ref().ok_or("GENERATION_PLAN")?.0,
+                    self.states.at(physical as usize * self.stride).cast(),
+                    parents,
+                    self.route_banks[0].sorted_refs.ptr.cast(),
+                    h.source_begin.ptr.cast(),
+                    self.candidates,
+                    view.states.cast(),
+                    view.count,
+                    self.candidates,
+                    self.route_banks[0].packed_states.ptr.cast(),
+                    fatal,
+                    s,
+                )
+            })?;
+            // Snapshot incoming count before the response exchange overwrites view.
+            unsafe {
+                check(cudaMemsetAsync(
+                    h.device_counts.ptr,
+                    0,
+                    self.cfg.world as usize * 4,
+                    s,
+                ))?;
+                check(cudaMemcpyAsync(
+                    h.device_counts.at(logical_peer * 4),
+                    view.count.cast(),
+                    4,
+                    3,
+                    s,
+                ))?;
+            }
+            gate()?;
+            check(unsafe {
+                mgbfs_nccl_lsa_exchange_rows(
+                    self.comm.0,
+                    std::ptr::null(),
+                    self.route_banks[0].packed_states.ptr,
+                    h.device_counts.ptr.cast(),
+                    self.collective_recv.ptr.cast(),
+                    logical_peer as u32,
+                    peer,
+                    self.stride as u32,
+                    s,
+                )
+            })?;
+            import(view.fatal)?;
+            gate()?;
             view.states.cast()
         };
         gate()?;
-        let response_count=if group==0{h.count.ptr.cast()}else{view.count};
-        check(unsafe{mgbfs_shard_ab_pipeline_apply_responses(ab.handle,responses.cast(),response_count)})?;gate()?;Ok(())
+        let response_count = if group == 0 {
+            h.count.ptr.cast()
+        } else {
+            view.count
+        };
+        check(unsafe {
+            mgbfs_shard_ab_pipeline_apply_responses(ab.handle, responses.cast(), response_count)
+        })?;
+        gate()?;
+        Ok(())
     }
-    fn materialize_shard_selected(&self,parent:Option<Extent>,offset:u64,parents:u32,round:u32,group:usize,source_base:u32)->Result<()> {
-        if self.lsa_view.is_some(){return self.materialize_shard_selected_device(parent,offset,parents,round,group);}
-        let h=self.shard_key_first.as_ref().ok_or("SHARD_KEY_FIRST_STORAGE")?;
-        let ab=self.shard_ab.as_ref().ok_or("SHARD_AB_MISSING")?;
-        let s=self.stream.0;let physical=parent.map_or(0,|e|e.begin+offset);
-        let fatal=unsafe{self.ring.at(48).cast::<u32>()};
-        check(unsafe{mgbfs_shard_ab_pipeline_row_requests(ab.handle,h.requests.ptr.cast(),h.count.ptr.cast(),self.candidates)})?;
+    fn materialize_shard_selected(
+        &self,
+        parent: Option<Extent>,
+        offset: u64,
+        parents: u32,
+        round: u32,
+        group: usize,
+        source_base: u32,
+    ) -> Result<()> {
+        if self.lsa_view.is_some() {
+            return self.materialize_shard_selected_device(parent, offset, parents, round, group);
+        }
+        let h = self
+            .shard_key_first
+            .as_ref()
+            .ok_or("SHARD_KEY_FIRST_STORAGE")?;
+        let ab = self.shard_ab.as_ref().ok_or("SHARD_AB_MISSING")?;
+        let s = self.stream.0;
+        let physical = parent.map_or(0, |e| e.begin + offset);
+        let fatal = unsafe { self.ring.at(48).cast::<u32>() };
+        check(unsafe {
+            mgbfs_shard_ab_pipeline_row_requests(
+                ab.handle,
+                h.requests.ptr.cast(),
+                h.count.ptr.cast(),
+                self.candidates,
+            )
+        })?;
         // The local producer consumes device counts directly. Keep this stream
         // ordered; the following peer-selection vote (or depth finalization on
         // one rank) observes the sticky ring fatal before publishing anything.
-        if group==0 {
-            check(unsafe{mgbfs_generate_selected_compact(self.generate.as_ref().ok_or("GENERATION_PLAN")?.0,self.states.at(physical as usize*self.stride).cast(),parents,self.route_banks[0].sorted_refs.ptr.cast(),0,self.candidates,h.requests.ptr.cast(),h.count.ptr.cast(),self.candidates,self.route_banks[0].packed_states.ptr.cast(),fatal,s)})?;
-            return check(unsafe{mgbfs_shard_ab_pipeline_apply_responses(ab.handle,self.route_banks[0].packed_states.ptr.cast(),h.count.ptr.cast())});
+        if group == 0 {
+            check(unsafe {
+                mgbfs_generate_selected_compact(
+                    self.generate.as_ref().ok_or("GENERATION_PLAN")?.0,
+                    self.states.at(physical as usize * self.stride).cast(),
+                    parents,
+                    self.route_banks[0].sorted_refs.ptr.cast(),
+                    0,
+                    self.candidates,
+                    h.requests.ptr.cast(),
+                    h.count.ptr.cast(),
+                    self.candidates,
+                    self.route_banks[0].packed_states.ptr.cast(),
+                    fatal,
+                    s,
+                )
+            })?;
+            return check(unsafe {
+                mgbfs_shard_ab_pipeline_apply_responses(
+                    ab.handle,
+                    self.route_banks[0].packed_states.ptr.cast(),
+                    h.count.ptr.cast(),
+                )
+            });
         }
-        let peer=self.cfg.rank^round;
-        let received=self.recv_count.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?;
-        let (count,incoming)=if self.cfg.world==2 && h.peer_metadata_enabled {
+        let peer = self.cfg.rank ^ round;
+        let received = self
+            .recv_count
+            .as_ref()
+            .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?;
+        let (count, incoming) = if self.cfg.world == 2 && h.peer_metadata_enabled {
             // Two peers receive the same pair of status words. Fatal and both
             // capacities are checked before either issues variable-size traffic.
             // Metadata stays leased on the producer stream until this round drains.
             unsafe {
-                check(cudaMemcpyAsync(h.peer_metadata.ptr,h.count.ptr,4,3,s))?;
-                check(cudaMemcpyAsync(h.peer_metadata.at(4),fatal.cast(),4,3,s))?;
-                check(mgbfs_nccl_send_recv(self.comm.0,h.peer_metadata.ptr,8,peer,h.peer_metadata.at(8),8,s))?;
+                check(cudaMemcpyAsync(h.peer_metadata.ptr, h.count.ptr, 4, 3, s))?;
+                check(cudaMemcpyAsync(
+                    h.peer_metadata.at(4),
+                    fatal.cast(),
+                    4,
+                    3,
+                    s,
+                ))?;
+                check(mgbfs_nccl_send_recv(
+                    self.comm.0,
+                    h.peer_metadata.ptr,
+                    8,
+                    peer,
+                    h.peer_metadata.at(8),
+                    8,
+                    s,
+                ))?;
             }
             self.wait_comm_stream(s)?;
-            let m=h.peer_metadata.one::<[u32;4]>()?;
-            let error=m[1].max(m[3]);
-            if error!=0 {return Err(format!("SHARD_AB_PREPARE_FATAL_{error}"));}
-            if m[0]>self.candidates || m[2]>self.candidates {return Err("SHARD_KEY_FIRST_REQUEST_CAPACITY".into());}
-            check(unsafe{cudaMemcpyAsync(received.ptr,h.peer_metadata.at(8),4,3,s)})?;
-            (m[0],m[2])
-        }else{
-            let selection_error=self.all_max_ring_fatal()?;
-            if selection_error!=0{return Err(format!("SHARD_AB_PREPARE_FATAL_{selection_error}"));}
-            let count=h.count.one::<u32>()?;
-            check(unsafe{mgbfs_nccl_send_recv(self.comm.0,h.count.ptr,4,peer,received.ptr,4,s)})?;
+            let m = h.peer_metadata.one::<[u32; 4]>()?;
+            let error = m[1].max(m[3]);
+            if error != 0 {
+                return Err(format!("SHARD_AB_PREPARE_FATAL_{error}"));
+            }
+            if m[0] > self.candidates || m[2] > self.candidates {
+                return Err("SHARD_KEY_FIRST_REQUEST_CAPACITY".into());
+            }
+            check(unsafe { cudaMemcpyAsync(received.ptr, h.peer_metadata.at(8), 4, 3, s) })?;
+            (m[0], m[2])
+        } else {
+            let selection_error = self.all_max_ring_fatal()?;
+            if selection_error != 0 {
+                return Err(format!("SHARD_AB_PREPARE_FATAL_{selection_error}"));
+            }
+            let count = h.count.one::<u32>()?;
+            check(unsafe {
+                mgbfs_nccl_send_recv(self.comm.0, h.count.ptr, 4, peer, received.ptr, 4, s)
+            })?;
             self.wait_comm_stream(s)?;
-            let incoming=received.one::<u32>()?;
-            if self.all_max(u32::from(incoming>self.candidates))?!=0{return Err("SHARD_KEY_FIRST_REQUEST_CAPACITY".into());}
-            (count,incoming)
+            let incoming = received.one::<u32>()?;
+            if self.all_max(u32::from(incoming > self.candidates))? != 0 {
+                return Err("SHARD_KEY_FIRST_REQUEST_CAPACITY".into());
+            }
+            (count, incoming)
         };
-        let response={
-            check(unsafe{mgbfs_nccl_send_recv(self.comm.0,h.requests.ptr,u64::from(count)*4,peer,h.received.ptr,u64::from(incoming)*4,s)})?;
-            check(unsafe{mgbfs_generate_selected_compact(self.generate.as_ref().ok_or("GENERATION_PLAN")?.0,self.states.at(physical as usize*self.stride).cast(),parents,self.route_banks[0].sorted_refs.ptr.cast(),source_base,self.candidates,h.received.ptr.cast(),received.ptr.cast(),self.candidates,self.route_banks[0].packed_states.ptr.cast(),fatal,s)})?;
-            let output=self.recv_states.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?;
-            check(unsafe{mgbfs_nccl_send_recv(self.comm.0,self.route_banks[0].packed_states.ptr,u64::from(incoming)*self.stride as u64,peer,output.ptr,u64::from(count)*self.stride as u64,s)})?;
+        let response = {
+            check(unsafe {
+                mgbfs_nccl_send_recv(
+                    self.comm.0,
+                    h.requests.ptr,
+                    u64::from(count) * 4,
+                    peer,
+                    h.received.ptr,
+                    u64::from(incoming) * 4,
+                    s,
+                )
+            })?;
+            check(unsafe {
+                mgbfs_generate_selected_compact(
+                    self.generate.as_ref().ok_or("GENERATION_PLAN")?.0,
+                    self.states.at(physical as usize * self.stride).cast(),
+                    parents,
+                    self.route_banks[0].sorted_refs.ptr.cast(),
+                    source_base,
+                    self.candidates,
+                    h.received.ptr.cast(),
+                    received.ptr.cast(),
+                    self.candidates,
+                    self.route_banks[0].packed_states.ptr.cast(),
+                    fatal,
+                    s,
+                )
+            })?;
+            let output = self
+                .recv_states
+                .as_ref()
+                .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?;
+            check(unsafe {
+                mgbfs_nccl_send_recv(
+                    self.comm.0,
+                    self.route_banks[0].packed_states.ptr,
+                    u64::from(incoming) * self.stride as u64,
+                    peer,
+                    output.ptr,
+                    u64::from(count) * self.stride as u64,
+                    s,
+                )
+            })?;
             output.ptr
         };
-        if !h.combined_status && self.all_max_ring_fatal()?!=0{return Err("SHARD_KEY_FIRST_REGENERATION_FATAL".into());}
-        check(unsafe{mgbfs_shard_ab_pipeline_apply_responses(ab.handle,response.cast(),h.count.ptr.cast())})?;
+        if !h.combined_status && self.all_max_ring_fatal()? != 0 {
+            return Err("SHARD_KEY_FIRST_REGENERATION_FATAL".into());
+        }
+        check(unsafe {
+            mgbfs_shard_ab_pipeline_apply_responses(ab.handle, response.cast(), h.count.ptr.cast())
+        })?;
         Ok(())
     }
     fn globally_small(&self, value: u32) -> Result<bool> {
         self.collective_send.put_u32(value.min(1001))?;
-        check(unsafe {mgbfs_nccl_all_reduce_sum_u32(self.comm.0,
-            self.collective_send.ptr.cast(),self.collective_recv.ptr.cast(),self.stream.0)})?;
+        check(unsafe {
+            mgbfs_nccl_all_reduce_sum_u32(
+                self.comm.0,
+                self.collective_send.ptr.cast(),
+                self.collective_recv.ptr.cast(),
+                self.stream.0,
+            )
+        })?;
         self.wait_comm_stream(self.stream.0)?;
         Ok(self.collective_recv.one::<u32>()? <= 1000)
     }
-    fn archive_unprocessed_snapshot(&mut self,archive:&mut crate::pinned_archive::PinnedArchive,
-        view:&[Extent],depth:u32)->Result<()> {
-        check(unsafe {cudaStreamSynchronize(self.stream.0)})?;
-        check(unsafe {cudaStreamSynchronize(self.generation_stream.0)})?;
-        let head=self.ring.one::<Ring>()?.head;
-        let quota=1000/self.cfg.world+u32::from(self.cfg.rank<1000%self.cfg.world);
-        let mut left=u64::from(quota);let mut saved=0u64;let mut skipped=0u64;let mut unprocessed=0u64;
-        let advanced=self.depth;self.depth=depth;
-        let copied=(|| {
-            for(index,extent) in view.iter().enumerate(){
-                let skip=head.saturating_sub(extent.sequence).min(extent.count);
-                skipped+=skip;unprocessed+=extent.count-skip;
-                let take=left.min(extent.count-skip);
-                if take>0 {self.archive_range_inner(archive,extent.begin+skip,take,index,true)?;}
-                left-=take;saved+=take;
+    fn archive_unprocessed_snapshot(
+        &mut self,
+        archive: &mut crate::pinned_archive::PinnedArchive,
+        view: &[Extent],
+        depth: u32,
+    ) -> Result<()> {
+        check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
+        check(unsafe { cudaStreamSynchronize(self.generation_stream.0) })?;
+        let head = self.ring.one::<Ring>()?.head;
+        let quota = 1000 / self.cfg.world + u32::from(self.cfg.rank < 1000 % self.cfg.world);
+        let mut left = u64::from(quota);
+        let mut saved = 0u64;
+        let mut skipped = 0u64;
+        let mut unprocessed = 0u64;
+        let advanced = self.depth;
+        self.depth = depth;
+        let copied = (|| {
+            for (index, extent) in view.iter().enumerate() {
+                let skip = head.saturating_sub(extent.sequence).min(extent.count);
+                skipped += skip;
+                unprocessed += extent.count - skip;
+                let take = left.min(extent.count - skip);
+                if take > 0 {
+                    self.archive_range_inner(archive, extent.begin + skip, take, index, true)?;
+                }
+                left -= take;
+                saved += take;
             }
-            archive.layer(u64::from(depth),saved)
-        })();self.depth=advanced;copied?;
+            archive.layer(u64::from(depth), saved)
+        })();
+        self.depth = advanced;
+        copied?;
         // A single pipe write keeps this control record intact across ranks.
         std::io::Write::write_all(&mut std::io::stderr(),format!(
             "MGBFS_INCOMPLETE_SAMPLE rank={} depth={depth} saved={saved} unprocessed={unprocessed} processed={skipped} scope=unprocessed_current_suffix\n",self.cfg.rank).as_bytes())
             .map_err(|e|e.to_string())?;
         Ok(())
     }
-    pub fn archive_selected_terminal_snapshot(&mut self,archive:&mut crate::pinned_archive::PinnedArchive)->Result<()> {
-        if !archive.selected || self.archived_depth==Some(self.depth) {return Err("SELECTED_SNAPSHOT_PHASE".into());}
-        let depth=self.depth;let count=self.current_count;
-        let mut view=[Extent::default();2];let len=self.front.len();
-        if len>2{return Err("SELECTED_SNAPSHOT_EXTENTS".into());}view[..len].copy_from_slice(&self.front);
-        let exported=count.min(1000);let mut left=u64::from(exported);
-        for(index,extent) in view[..len].iter().enumerate(){let take=left.min(extent.count);
-            if take>0{self.archive_range_inner(archive,extent.begin,take,index,true)?;}left-=take;}
-        archive.layer(u64::from(depth),u64::from(exported))?;
+    pub fn archive_selected_terminal_snapshot(
+        &mut self,
+        archive: &mut crate::pinned_archive::PinnedArchive,
+    ) -> Result<()> {
+        if !archive.selected || self.archived_depth == Some(self.depth) {
+            return Err("SELECTED_SNAPSHOT_PHASE".into());
+        }
+        let depth = self.depth;
+        let count = self.current_count;
+        let mut view = [Extent::default(); 2];
+        let len = self.front.len();
+        if len > 2 {
+            return Err("SELECTED_SNAPSHOT_EXTENTS".into());
+        }
+        view[..len].copy_from_slice(&self.front);
+        let exported = count.min(1000);
+        let mut left = u64::from(exported);
+        for (index, extent) in view[..len].iter().enumerate() {
+            let take = left.min(extent.count);
+            if take > 0 {
+                self.archive_range_inner(archive, extent.begin, take, index, true)?;
+            }
+            left -= take;
+        }
+        archive.layer(u64::from(depth), u64::from(exported))?;
         archive.replace_last_layer()?;
-        self.archive_unprocessed_snapshot(archive,&view[..len],depth)?;
-        self.archived_depth=Some(depth);Ok(())
+        self.archive_unprocessed_snapshot(archive, &view[..len], depth)?;
+        self.archived_depth = Some(depth);
+        Ok(())
     }
-    pub fn advance_selected(&mut self, archive: &mut crate::pinned_archive::PinnedArchive) -> Result<bool> {
-        if !archive.selected || self.front.len() > 2 || self.failed ||
-                self.front.iter().map(|e| e.count).sum::<u64>() != u64::from(self.current_count) {
+    pub fn advance_selected(
+        &mut self,
+        archive: &mut crate::pinned_archive::PinnedArchive,
+    ) -> Result<bool> {
+        if !archive.selected
+            || self.front.len() > 2
+            || self.failed
+            || self.front.iter().map(|e| e.count).sum::<u64>() != u64::from(self.current_count)
+        {
             return Err("SELECTED_ARCHIVE_FRONTIER_CONTRACT".into());
         }
         let depth = self.depth;
@@ -5886,12 +6490,22 @@ if lossless_bits.is_none(){
         let mut view = [Extent::default(); 2];
         let len = self.front.len();
         view[..len].copy_from_slice(&self.front);
-        let small = if archive.selected_whole {self.globally_small(count)?} else {count<=1000};
-        let exported = if archive.selected_whole && !small {0} else {count.min(1000)};
+        let small = if archive.selected_whole {
+            self.globally_small(count)?
+        } else {
+            count <= 1000
+        };
+        let exported = if archive.selected_whole && !small {
+            0
+        } else {
+            count.min(1000)
+        };
         let mut remaining = u64::from(exported);
         for (index, extent) in view[..len].iter().enumerate() {
             let take = remaining.min(extent.count);
-            if take != 0 { self.archive_range(archive, extent.begin, take, index)?; }
+            if take != 0 {
+                self.archive_range(archive, extent.begin, take, index)?;
+            }
             remaining -= take;
         }
         archive.layer(u64::from(depth), u64::from(exported))?;
@@ -5899,28 +6513,51 @@ if lossless_bits.is_none(){
         let result = self.advance();
         // A resource stop happens before publication writes. Its current layer
         // is still physically resident although its parent descriptors retired.
-        let resource_stop = result.is_err() && (self.cancel_requested.as_ref().is_some_and(|flag|
-            flag.load(std::sync::atomic::Ordering::Acquire)) || result.as_ref().err().is_some_and(|e|
-            e.contains("SHARD_AB_PREPARE_FATAL_16") || e.contains("SHARD_AB_PREPARE_FATAL_112") ||
-            e.contains("GROUP_STATE_RING_RETIRE_FATAL_16") ||
-            e.contains("GROUP_STATE_RING_RETIRE_FATAL_112") ||
-            e.contains("LIBRARY_RANK_DEPTH_FATAL_16_16") ||
-            e.contains("LIBRARY_RANK_DEPTH_FATAL_0_112") ||
-            e.contains("SHARD_AB_PREPARE_FATAL_11") || e.contains("SHARD_AB_PREPARE_FATAL_12") ||
-            e.contains("GROUP_STATE_RING_RETIRE_FATAL_11") || e.contains("GROUP_STATE_RING_RETIRE_FATAL_12") ||
-            e.contains("LIBRARY_RANK_DEPTH_FATAL_11_11") || e.contains("LIBRARY_RANK_DEPTH_FATAL_12_12")));
+        let resource_stop = result.is_err()
+            && (self
+                .cancel_requested
+                .as_ref()
+                .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire))
+                || result.as_ref().err().is_some_and(|e| {
+                    e.contains("SHARD_AB_PREPARE_FATAL_16")
+                        || e.contains("SHARD_AB_PREPARE_FATAL_112")
+                        || e.contains("GROUP_STATE_RING_RETIRE_FATAL_16")
+                        || e.contains("GROUP_STATE_RING_RETIRE_FATAL_112")
+                        || e.contains("LIBRARY_RANK_DEPTH_FATAL_16_16")
+                        || e.contains("LIBRARY_RANK_DEPTH_FATAL_0_112")
+                        || e.contains("SHARD_AB_PREPARE_FATAL_11")
+                        || e.contains("SHARD_AB_PREPARE_FATAL_12")
+                        || e.contains("GROUP_STATE_RING_RETIRE_FATAL_11")
+                        || e.contains("GROUP_STATE_RING_RETIRE_FATAL_12")
+                        || e.contains("LIBRARY_RANK_DEPTH_FATAL_11_11")
+                        || e.contains("LIBRARY_RANK_DEPTH_FATAL_12_12")
+                }));
         if resource_stop {
             archive.replace_last_layer()?;
-            self.archive_unprocessed_snapshot(archive,&view[..len],depth)?;
+            self.archive_unprocessed_snapshot(archive, &view[..len], depth)?;
         }
-        let terminal = matches!(result,Ok(false));
-        if terminal && !archive.selected_prefix && count>0 && (if archive.selected_whole {!small} else {count>1000}) {
+        let terminal = matches!(result, Ok(false));
+        if terminal
+            && !archive.selected_prefix
+            && count > 0
+            && (if archive.selected_whole {
+                !small
+            } else {
+                count > 1000
+            })
+        {
             archive.replace_last_layer()?;
             let advanced_depth = self.depth;
             self.depth = depth;
             let copied = (|| {
                 for (index, extent) in view[..len].iter().enumerate() {
-                    self.archive_range_inner(archive, extent.begin, extent.count, index, resource_stop)?;
+                    self.archive_range_inner(
+                        archive,
+                        extent.begin,
+                        extent.count,
+                        index,
+                        resource_stop,
+                    )?;
                 }
                 archive.layer(u64::from(depth), u64::from(count))
             })();
@@ -5936,7 +6573,11 @@ if lossless_bits.is_none(){
         }
         let result = self.advance_inner(None);
         let result = annotate_device_logical_failure(result, self.terminal);
-        if result.is_err() { if let Some(graph) = self.batch_graph.as_mut() { graph.cancel(); } }
+        if result.is_err() {
+            if let Some(graph) = self.batch_graph.as_mut() {
+                graph.cancel();
+            }
+        }
         if let Err(error) = &result {
             // Publish the originating error before abort/Drop can block or a
             // fail-fast launcher terminates this rank after its peer exits.
@@ -5968,7 +6609,11 @@ if lossless_bits.is_none(){
         }
         let result = self.advance_inner(Some(archive));
         let result = annotate_device_logical_failure(result, self.terminal);
-        if result.is_err() { if let Some(graph) = self.batch_graph.as_mut() { graph.cancel(); } }
+        if result.is_err() {
+            if let Some(graph) = self.batch_graph.as_mut() {
+                graph.cancel();
+            }
+        }
         if let Err(error) = &result {
             eprintln!("MGBFS_RUNTIME_FATAL rank={} error={error}", self.cfg.rank);
         }
@@ -6907,35 +7552,61 @@ if lossless_bits.is_none(){
         unsafe {
             if let Some(h) = self.hash_first.as_ref() {
                 let d = h.device.as_ref().ok_or("HASH_FIRST_DEVICE_STORAGE")?;
-                check(mgbfs_device_store_u32(h.parent_count.ptr.cast(), batch.count, s))?;
+                check(mgbfs_device_store_u32(
+                    h.parent_count.ptr.cast(),
+                    batch.count,
+                    s,
+                ))?;
                 let generate = if self.hash_first_tensor_generation {
                     mgbfs_generate_hash_only_tc
-                } else { mgbfs_generate_hash_only };
-                check(generate(h.n, self.moves, h.modulus, self.stride as u32,
-                    self.cfg.batch, self.candidates, self.cfg.rank, batch.sequence,
+                } else {
+                    mgbfs_generate_hash_only
+                };
+                check(generate(
+                    h.n,
+                    self.moves,
+                    h.modulus,
+                    self.stride as u32,
+                    self.cfg.batch,
+                    self.candidates,
+                    self.cfg.rank,
+                    batch.sequence,
                     self.states.at(batch.begin as usize * self.stride).cast(),
-                    h.generators.ptr.cast(), h.coefficients.ptr.cast(), h.offsets.ptr.cast(),
-                    h.parent_count.ptr.cast(), self.route_banks[0].child_hashes.ptr.cast(), self.route_banks[0].children.ptr.cast(),
+                    h.generators.ptr.cast(),
+                    h.coefficients.ptr.cast(),
+                    h.offsets.ptr.cast(),
+                    h.parent_count.ptr.cast(),
+                    self.route_banks[0].child_hashes.ptr.cast(),
+                    self.route_banks[0].children.ptr.cast(),
                     // Producer count must not overwrite the current owner's
                     // routed-count before its selected origins are committed.
-                    self.route_banks[0].generation_control.at(4).cast(), self.route_banks[0].generation_control.ptr.cast(), s))?;
-            } else if let Some(plan)=self.compact_direct_hash.as_ref(){
-                check(mgbfs_compact_hash_run(plan.0,self.states.at(batch.begin as usize*self.stride).cast(),self.route_banks[0].child_hashes.ptr.cast(),batch.count,s))?;
+                    self.route_banks[0].generation_control.at(4).cast(),
+                    self.route_banks[0].generation_control.ptr.cast(),
+                    s,
+                ))?;
+            } else if let Some(plan) = self.compact_direct_hash.as_ref() {
+                check(mgbfs_compact_hash_run(
+                    plan.0,
+                    self.states.at(batch.begin as usize * self.stride).cast(),
+                    self.route_banks[0].child_hashes.ptr.cast(),
+                    batch.count,
+                    s,
+                ))?;
             } else {
-            check(mgbfs_generate_run(
-                self.generate.as_ref().ok_or("DENSE_GENERATOR_MISSING")?.0,
-                self.states.at(batch.begin as usize * self.stride).cast(),
-                self.route_banks[0].children.ptr.cast(),
-                batch.count,
-                s,
-            ))?;
-            check(mgbfs_hash_run(
-                self.hash.as_ref().ok_or("DENSE_HASH_MISSING")?.0,
-                self.route_banks[0].children.ptr.cast(),
-                self.route_banks[0].child_hashes.ptr.cast(),
-                batch.count * self.moves,
-                s,
-            ))?;
+                check(mgbfs_generate_run(
+                    self.generate.as_ref().ok_or("DENSE_GENERATOR_MISSING")?.0,
+                    self.states.at(batch.begin as usize * self.stride).cast(),
+                    self.route_banks[0].children.ptr.cast(),
+                    batch.count,
+                    s,
+                ))?;
+                check(mgbfs_hash_run(
+                    self.hash.as_ref().ok_or("DENSE_HASH_MISSING")?.0,
+                    self.route_banks[0].children.ptr.cast(),
+                    self.route_banks[0].child_hashes.ptr.cast(),
+                    batch.count * self.moves,
+                    s,
+                ))?;
             }
             self.route_banks[0].generation_done.record(sequence, s)?;
         }
@@ -6986,8 +7657,13 @@ if lossless_bits.is_none(){
             check(cudaMemsetAsync(self.layer_count.ptr, 0, 4, s))?;
             if self.rank_owner_mode() {
                 check(cudaMemsetAsync(
-                    self.next_extent_count.as_ref().ok_or("NEXT_EXTENT_COUNT_MISSING")?.ptr,
-                    0, 4, s,
+                    self.next_extent_count
+                        .as_ref()
+                        .ok_or("NEXT_EXTENT_COUNT_MISSING")?
+                        .ptr,
+                    0,
+                    4,
+                    s,
                 ))?;
             }
         }
@@ -6995,16 +7671,31 @@ if lossless_bits.is_none(){
         if let Some(library) = self.library_owner.as_mut() {
             if library.closed {
                 if library.rank_mode {
-                    library.rank = unsafe { create_rank_owner(
-                        library, &self.prev, &self.curr, self.cfg.shards,
-                        self.candidates, self.cfg.world, s,
-                    )? };
+                    library.rank = unsafe {
+                        create_rank_owner(
+                            library,
+                            &self.prev,
+                            &self.curr,
+                            self.cfg.shards,
+                            self.candidates,
+                            self.cfg.world,
+                            s,
+                        )?
+                    };
                 } else {
                     for shard in 0..library.shards.len() {
                         unsafe {
                             library.shards[shard].reopen_window(
-                                history_view(&self.prev, library.plane_words, &library.previous[shard]),
-                                history_view(&self.curr, library.plane_words, &library.current[shard]),
+                                history_view(
+                                    &self.prev,
+                                    library.plane_words,
+                                    &library.previous[shard],
+                                ),
+                                history_view(
+                                    &self.curr,
+                                    library.plane_words,
+                                    &library.current[shard],
+                                ),
                                 library.capacity,
                             )?;
                         }
@@ -7027,39 +7718,91 @@ if lossless_bits.is_none(){
         let scheduled_rounds = self.all_max(local_rounds?)?;
         if self.shard_ab.is_some() {
             let largest = self.all_max(self.current_count)?;
-            let generated = u64::from(largest).checked_mul(u64::from(self.cfg.world))
-                .and_then(|n| n.checked_mul(u64::from(self.moves))).ok_or("SHARD_AB_INPUT_BOUND")?.max(1);
+            let generated = u64::from(largest)
+                .checked_mul(u64::from(self.cfg.world))
+                .and_then(|n| n.checked_mul(u64::from(self.moves)))
+                .ok_or("SHARD_AB_INPUT_BOUND")?
+                .max(1);
             let ab = self.shard_ab.as_mut().ok_or("SHARD_AB_MISSING")?;
             let shape = ab.shape;
             // Uniform owner hashing: largest rank frontier bounds average input;
             // retain 2x skew headroom without multiplying logical shards by
             // every GPU. Absolute input bound and explicit overflow stay intact.
-            let expected = u64::from(largest).checked_mul(u64::from(self.moves))
-                .and_then(|v|v.checked_mul(u64::from(self.cfg.world.min(2))))
-                .ok_or("SHARD_AB_INPUT_BOUND")?.max(1);
+            let expected = u64::from(largest)
+                .checked_mul(u64::from(self.moves))
+                .and_then(|v| v.checked_mul(u64::from(self.cfg.world.min(2))))
+                .ok_or("SHARD_AB_INPUT_BOUND")?
+                .max(1);
             // A large producer portion must also fit the bounded A/B staging arena.
             // Choose this once per depth; no host counts or reallocations per portion.
-            let stage = u64::from(if shape.capacity < 256 { 256 } else { shape.capacity.min(131072) });
-            let portion = u64::from(largest.min(self.cfg.batch)).checked_mul(u64::from(self.moves))
-                .and_then(|v|v.checked_mul(u64::from(self.cfg.world.min(2))))
-                .ok_or("SHARD_AB_INPUT_BOUND")?.max(1);
-            let estimate = ((expected+u64::from(shape.capacity)-1)/u64::from(shape.capacity))
-                .max((portion+stage-1)/stage)
-                .max(1).next_power_of_two().min(u64::from(shape.maximum)) as u32;
+            let stage = u64::from(if shape.capacity < 256 {
+                256
+            } else {
+                shape.capacity.min(131072)
+            });
+            let portion = u64::from(largest.min(self.cfg.batch))
+                .checked_mul(u64::from(self.moves))
+                .and_then(|v| v.checked_mul(u64::from(self.cfg.world.min(2))))
+                .ok_or("SHARD_AB_INPUT_BOUND")?
+                .max(1);
+            let estimate = ((expected + u64::from(shape.capacity) - 1) / u64::from(shape.capacity))
+                .max((portion + stage - 1) / stage)
+                .max(1)
+                .next_power_of_two()
+                .min(u64::from(shape.maximum)) as u32;
             let active = shape.forced.unwrap_or(estimate);
             let bound = generated.min(u64::from(shape.capacity)).next_power_of_two() as u32;
-            ab.input_bound = self.candidates.min(u32::try_from(generated.min(u64::from(u32::MAX)))
-                .map_err(|_| "SHARD_AB_INPUT_BOUND")?).max(1);
-            let owner = self.cfg.logical_owner_to_rank.iter().position(|&rank|rank==self.cfg.rank).ok_or("OWNER_MAP")? as u32;
-            check(unsafe { mgbfs_shard_ab_indexed_bind(ab.handle,self.ring.ptr,self.control.ptr,self.extent.ptr,
-                self.states.ptr.cast(),self.layer_count.ptr.cast(),self.cfg.layer_capacity,
-                self.next_extent_count.as_ref().ok_or("NEXT_EXTENT_COUNT_MISSING")?.ptr.cast(),
-                self.next_extents.as_ref().ok_or("NEXT_EXTENTS_MISSING")?.ptr) })?;
-            check(unsafe { mgbfs_shard_ab_pipeline_begin(ab.handle,active,owner,self.cfg.world,
-                self.prev.ptr,self.prev_count,self.curr.ptr,self.current_count,bound,
-                self.ring.at(48).cast()) })?;
-            eprintln!("MGBFS_SHARD_AB_DEPTH rank={} depth={} shards={} slots={} job_bound={} capacity={}",
-                self.cfg.rank,self.depth,active,shape.slots,bound,shape.capacity);
+            ab.input_bound = self
+                .candidates
+                .min(
+                    u32::try_from(generated.min(u64::from(u32::MAX)))
+                        .map_err(|_| "SHARD_AB_INPUT_BOUND")?,
+                )
+                .max(1);
+            let owner = self
+                .cfg
+                .logical_owner_to_rank
+                .iter()
+                .position(|&rank| rank == self.cfg.rank)
+                .ok_or("OWNER_MAP")? as u32;
+            check(unsafe {
+                mgbfs_shard_ab_indexed_bind(
+                    ab.handle,
+                    self.ring.ptr,
+                    self.control.ptr,
+                    self.extent.ptr,
+                    self.states.ptr.cast(),
+                    self.layer_count.ptr.cast(),
+                    self.cfg.layer_capacity,
+                    self.next_extent_count
+                        .as_ref()
+                        .ok_or("NEXT_EXTENT_COUNT_MISSING")?
+                        .ptr
+                        .cast(),
+                    self.next_extents
+                        .as_ref()
+                        .ok_or("NEXT_EXTENTS_MISSING")?
+                        .ptr,
+                )
+            })?;
+            check(unsafe {
+                mgbfs_shard_ab_pipeline_begin(
+                    ab.handle,
+                    active,
+                    owner,
+                    self.cfg.world,
+                    self.prev.ptr,
+                    self.prev_count,
+                    self.curr.ptr,
+                    self.current_count,
+                    bound,
+                    self.ring.at(48).cast(),
+                )
+            })?;
+            eprintln!(
+                "MGBFS_SHARD_AB_DEPTH rank={} depth={} shards={} slots={} job_bound={} capacity={}",
+                self.cfg.rank, self.depth, active, shape.slots, bound, shape.capacity
+            );
         }
         let mut cursor = ParentCursor::default();
         let mut prefetched: Option<(ParentBatch, u64)> = None;
@@ -7067,12 +7810,18 @@ if lossless_bits.is_none(){
         let mut lsa_owner_recorded = false;
         let device_epoch = self.lsa_view.is_some() && self.rank_owner_mode();
         let graph_requested = self.batch_graph.is_some();
-        if self.shard_ab.is_some() && graph_requested
-            && std::env::var_os("MGBFS_TEST_SHARD_AB_GRAPH").is_none() {
+        if self.shard_ab.is_some()
+            && graph_requested
+            && std::env::var_os("MGBFS_TEST_SHARD_AB_GRAPH").is_none()
+        {
             return Err("SHARD_AB_GRAPH_NOT_YET_VALIDATED".into());
         }
-        if graph_requested && (!device_epoch || self.hash_first.is_some() || trace_sync
-            || std::env::var_os("MGBFS_TEST_OWNER_DAG_CAPTURE").is_some()) {
+        if graph_requested
+            && (!device_epoch
+                || self.hash_first.is_some()
+                || trace_sync
+                || std::env::var_os("MGBFS_TEST_OWNER_DAG_CAPTURE").is_some())
+        {
             return Err("BATCH_GRAPH_REQUIRES_DENSE_DEVICE_COUNT_RANK_OWNER".into());
         }
         // Small frontiers cannot fill one window. Keep their existing direct
@@ -7082,10 +7831,16 @@ if lossless_bits.is_none(){
         if graph_mode {
             if let Some(a) = archive.as_deref() {
                 let credits = crate::reference_launch::graph_archive_credits(
-                    scheduled_rounds, self.cfg.batch, a.rows, self.epoch_completed.len())?;
+                    scheduled_rounds,
+                    self.cfg.batch,
+                    a.rows,
+                    self.epoch_completed.len(),
+                )?;
                 if a.credit_capacity() < credits {
-                    return Err(format!("GRAPH_ARCHIVE_CREDIT_BUDGET required={credits} available={}",
-                        a.credit_capacity()));
+                    return Err(format!(
+                        "GRAPH_ARCHIVE_CREDIT_BUDGET required={credits} available={}",
+                        a.credit_capacity()
+                    ));
                 }
             }
         }
@@ -7111,19 +7866,31 @@ if lossless_bits.is_none(){
                 // live; owner retirement waits on those copies inside the graph.
                 if let Some(a) = archive.as_deref_mut() {
                     let mut staged = cursor;
-                    for _ in 0..(scheduled_rounds-scheduled_round).min(32) {
+                    for _ in 0..(scheduled_rounds - scheduled_round).min(32) {
                         if let Some(batch) = staged.take(&self.front, self.cfg.batch)? {
-                            self.archive_range(a, batch.begin, u64::from(batch.count), batch.extent)?;
+                            self.archive_range(
+                                a,
+                                batch.begin,
+                                u64::from(batch.count),
+                                batch.extent,
+                            )?;
                         }
                     }
                 }
                 unsafe {
-                    self.batch_graph.as_mut().ok_or("BATCH_GRAPH_MISSING")?.begin(
-                        s, self.generation_stream.0, self.exchange_stream.0)?;
+                    self.batch_graph
+                        .as_mut()
+                        .ok_or("BATCH_GRAPH_MISSING")?
+                        .begin(s, self.generation_stream.0, self.exchange_stream.0)?;
                     // Rebind the prior-consumer dependency into this capture.
                     // Earlier launches are already ordered on the owner stream.
-                    check(cudaEventRecord(self.owner_consumed.as_ref()
-                        .ok_or("LSA_OWNER_EVENT_MISSING")?.0, s))?;
+                    check(cudaEventRecord(
+                        self.owner_consumed
+                            .as_ref()
+                            .ok_or("LSA_OWNER_EVENT_MISSING")?
+                            .0,
+                        s,
+                    ))?;
                 }
                 lsa_owner_recorded = true;
             }
@@ -7132,9 +7899,11 @@ if lossless_bits.is_none(){
             let extent_offset = work.map(|b| b.offset).unwrap_or(0);
             let parent = work.map(|b| self.front[b.extent]);
             let parents = work.map(|b| b.count).unwrap_or(0);
-            let next_work = if graph_mode && (scheduled_round+1)%32 == 0 {
+            let next_work = if graph_mode && (scheduled_round + 1) % 32 == 0 {
                 None // Never export a captured generation into the next window.
-            } else { cursor.peek(&self.front, self.cfg.batch)? };
+            } else {
+                cursor.peek(&self.front, self.cfg.batch)?
+            };
             let mut generation = None;
             let candidate_count = parents * self.moves;
             if trace_route {
@@ -7144,7 +7913,9 @@ if lossless_bits.is_none(){
                 if trace_route {
                     eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=archive_begin", self.cfg.rank, self.depth);
                 }
-                let error = if graph_mode { None } else if let Some(extent) = parent {
+                let error = if graph_mode {
+                    None
+                } else if let Some(extent) = parent {
                     self.archive_range(
                         a,
                         extent.begin + extent_offset,
@@ -7164,11 +7935,19 @@ if lossless_bits.is_none(){
                     // Host/API failure may prevent any further GPU submission.
                     // Return to the sole dispatcher's notification + abort path
                     // before issuing a collective or waiting for GPU progress.
-                    if let Some(error) = error { return Err(error); }
-                    check(unsafe { mgbfs_owner_lsa_fatal_gate(
-                        self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
-                        self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
-                    ) })?;
+                    if let Some(error) = error {
+                        return Err(error);
+                    }
+                    check(unsafe {
+                        mgbfs_owner_lsa_fatal_gate(
+                            self.comm.0,
+                            self.ring.ptr.cast(),
+                            self.control.ptr.cast(),
+                            self.collective_send.ptr.cast(),
+                            self.collective_recv.ptr.cast(),
+                            s,
+                        )
+                    })?;
                     if trace_route {
                         eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=archive_vote_queued", self.cfg.rank, self.depth);
                     }
@@ -7177,7 +7956,10 @@ if lossless_bits.is_none(){
                 }
             }
             if trace_route {
-                eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=generate_begin", self.cfg.rank, self.depth);
+                eprintln!(
+                    "MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=generate_begin",
+                    self.cfg.rank, self.depth
+                );
             }
             if self.hash_first.as_ref().is_some_and(|h| h.device.is_some()) && work.is_some() {
                 let batch = work.ok_or("GENERATION_BATCH_MISSING")?;
@@ -7186,16 +7968,29 @@ if lossless_bits.is_none(){
                     Some(_) => return Err("GENERATION_BATCH_IDENTITY".into()),
                     None => self.enqueue_compact_frontier_generation(batch)?,
                 };
-                unsafe { self.route_banks[0].generation_done.wait(sequence, s)?; }
+                unsafe {
+                    self.route_banks[0].generation_done.wait(sequence, s)?;
+                }
                 generation = Some(sequence);
                 let fatal = self.route_banks[0].generation_control.ptr.cast();
-                check(unsafe { mgbfs_owner_import_transport_fatal(
-                    fatal, self.ring.ptr.cast(), self.control.ptr.cast(), s,
-                ) })?;
-                check(unsafe { mgbfs_owner_lsa_fatal_gate(
-                    self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
-                    self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
-                ) })?;
+                check(unsafe {
+                    mgbfs_owner_import_transport_fatal(
+                        fatal,
+                        self.ring.ptr.cast(),
+                        self.control.ptr.cast(),
+                        s,
+                    )
+                })?;
+                check(unsafe {
+                    mgbfs_owner_lsa_fatal_gate(
+                        self.comm.0,
+                        self.ring.ptr.cast(),
+                        self.control.ptr.cast(),
+                        self.collective_send.ptr.cast(),
+                        self.collective_recv.ptr.cast(),
+                        s,
+                    )
+                })?;
             } else if let Some(h) = self.hash_first.as_ref() {
                 h.parent_count.put_u32(parents)?;
                 let (begin, physical) = parent
@@ -7232,13 +8027,24 @@ if lossless_bits.is_none(){
                     }
                 }
                 if device_epoch {
-                    check(unsafe { mgbfs_owner_import_transport_fatal(
-                        h.local_fatal.ptr.cast(), self.ring.ptr.cast(), self.control.ptr.cast(), s,
-                    ) })?;
-                    check(unsafe { mgbfs_owner_lsa_fatal_gate(
-                        self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
-                        self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
-                    ) })?;
+                    check(unsafe {
+                        mgbfs_owner_import_transport_fatal(
+                            h.local_fatal.ptr.cast(),
+                            self.ring.ptr.cast(),
+                            self.control.ptr.cast(),
+                            s,
+                        )
+                    })?;
+                    check(unsafe {
+                        mgbfs_owner_lsa_fatal_gate(
+                            self.comm.0,
+                            self.ring.ptr.cast(),
+                            self.control.ptr.cast(),
+                            self.collective_send.ptr.cast(),
+                            self.collective_recv.ptr.cast(),
+                            s,
+                        )
+                    })?;
                 } else if self.all_max(h.local_fatal.one::<u32>()?)? != 0 {
                     return Err("HASH_FIRST_GENERATION_FATAL".into());
                 }
@@ -7257,37 +8063,58 @@ if lossless_bits.is_none(){
                 check(unsafe { cudaStreamSynchronize(s) })?;
             }
             if trace_route {
-                eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=generation_end", self.cfg.rank, self.depth);
+                eprintln!(
+                    "MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=generation_end",
+                    self.cfg.rank, self.depth
+                );
             }
             unsafe {
                 if trace_route {
-                    eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=route_begin", self.cfg.rank, self.depth);
+                    eprintln!(
+                        "MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=route_begin",
+                        self.cfg.rank, self.depth
+                    );
                 }
                 if let Some(ab) = self.shard_ab.as_ref() {
                     if ab.sorted_merge {
                         // Full key order also preserves owner/shard prefixes.
                         // No pre-dedup: states and reference indices remain paired.
-                        check(mgbfs_route_run(self.route.0,self.route_banks[0].child_hashes.ptr,
-                            self.identity_refs.ptr.cast(),self.route_banks[0].sorted_hashes.ptr,
-                            self.route_banks[0].sorted_refs.ptr.cast(),self.route_banks[0].route_count.ptr.cast(),candidate_count,0,s))?;
+                        check(mgbfs_route_run(
+                            self.route.0,
+                            self.route_banks[0].child_hashes.ptr,
+                            self.identity_refs.ptr.cast(),
+                            self.route_banks[0].sorted_hashes.ptr,
+                            self.route_banks[0].sorted_refs.ptr.cast(),
+                            self.route_banks[0].route_count.ptr.cast(),
+                            candidate_count,
+                            0,
+                            s,
+                        ))?;
                     } else {
-                    check(mgbfs_route_run_sharded(self.route.0,self.route_banks[0].child_hashes.ptr,
-                        self.identity_refs.ptr.cast(),self.route_banks[0].sorted_hashes.ptr,
-                        self.route_banks[0].sorted_refs.ptr.cast(),self.route_banks[0].route_count.ptr.cast(),
-                        candidate_count,self.cfg.world*ab.shape.maximum,s))?;
+                        check(mgbfs_route_run_sharded(
+                            self.route.0,
+                            self.route_banks[0].child_hashes.ptr,
+                            self.identity_refs.ptr.cast(),
+                            self.route_banks[0].sorted_hashes.ptr,
+                            self.route_banks[0].sorted_refs.ptr.cast(),
+                            self.route_banks[0].route_count.ptr.cast(),
+                            candidate_count,
+                            self.cfg.world * ab.shape.maximum,
+                            s,
+                        ))?;
                     }
                 } else {
-                check(mgbfs_route_run(
-                    self.route.0,
-                    self.route_banks[0].child_hashes.ptr,
-                    self.identity_refs.ptr.cast(),
-                    self.route_banks[0].sorted_hashes.ptr,
-                    self.route_banks[0].sorted_refs.ptr.cast(),
-                    self.route_banks[0].route_count.ptr.cast(),
-                    candidate_count,
-                    self.cfg.prededup as i32,
-                    s,
-                ))?;
+                    check(mgbfs_route_run(
+                        self.route.0,
+                        self.route_banks[0].child_hashes.ptr,
+                        self.identity_refs.ptr.cast(),
+                        self.route_banks[0].sorted_hashes.ptr,
+                        self.route_banks[0].sorted_refs.ptr.cast(),
+                        self.route_banks[0].route_count.ptr.cast(),
+                        candidate_count,
+                        self.cfg.prededup as i32,
+                        s,
+                    ))?;
                 }
             }
             let packet_stride = if self.hash_first.is_some() {
@@ -7296,33 +8123,51 @@ if lossless_bits.is_none(){
                 self.stride
             };
             if self.shard_key_first.is_some() {
-                check(unsafe {mgbfs_exchange_count_device_n(self.cfg.world,self.candidates,self.route_banks[0].sorted_hashes.ptr,self.route_banks[0].route_count.ptr.cast(),self.route_banks[0].owner_counts.ptr.cast(),s)})?;
+                check(unsafe {
+                    mgbfs_exchange_count_device_n(
+                        self.cfg.world,
+                        self.candidates,
+                        self.route_banks[0].sorted_hashes.ptr,
+                        self.route_banks[0].route_count.ptr.cast(),
+                        self.route_banks[0].owner_counts.ptr.cast(),
+                        s,
+                    )
+                })?;
             } else {
-            check(unsafe {
-                mgbfs_exchange_pack_device_n(
-                    self.cfg.world,
-                    packet_stride as u32,
-                    self.candidates,
-                    self.route_banks[0].children.ptr.cast(),
-                    candidate_count,
-                    self.route_banks[0].sorted_hashes.ptr,
-                    self.route_banks[0].sorted_refs.ptr.cast(),
-                    self.route_banks[0].route_count.ptr.cast(),
-                    self.route_banks[0].packed_states.ptr.cast(),
-                    self.route_banks[0].owner_counts.ptr.cast(),
-                    s,
-                )
-            })?;
+                check(unsafe {
+                    mgbfs_exchange_pack_device_n(
+                        self.cfg.world,
+                        packet_stride as u32,
+                        self.candidates,
+                        self.route_banks[0].children.ptr.cast(),
+                        candidate_count,
+                        self.route_banks[0].sorted_hashes.ptr,
+                        self.route_banks[0].sorted_refs.ptr.cast(),
+                        self.route_banks[0].route_count.ptr.cast(),
+                        self.route_banks[0].packed_states.ptr.cast(),
+                        self.route_banks[0].owner_counts.ptr.cast(),
+                        s,
+                    )
+                })?;
             }
             if self.rank_owner_mode() {
                 let window = self.owner_window.as_ref().ok_or("OWNER_WINDOW_MISSING")?;
-                let logical_owner = self.cfg.logical_owner_to_rank.iter()
-                    .position(|&rank| rank == self.cfg.rank).ok_or("OWNER_MAP")? as u32;
+                let logical_owner = self
+                    .cfg
+                    .logical_owner_to_rank
+                    .iter()
+                    .position(|&rank| rank == self.cfg.rank)
+                    .ok_or("OWNER_MAP")? as u32;
                 check(unsafe {
                     mgbfs_owner_window_from_counts(
-                        self.cfg.world, self.candidates, logical_owner,
-                        self.route_banks[0].owner_counts.ptr.cast(), self.route_banks[0].route_count.ptr.cast(),
-                        window.ptr.cast(), window.at(4).cast(), s,
+                        self.cfg.world,
+                        self.candidates,
+                        logical_owner,
+                        self.route_banks[0].owner_counts.ptr.cast(),
+                        self.route_banks[0].route_count.ptr.cast(),
+                        window.ptr.cast(),
+                        window.at(4).cast(),
+                        s,
                     )
                 })?;
             }
@@ -7334,18 +8179,24 @@ if lossless_bits.is_none(){
             let host_ranges = if self.lsa_view.is_none() {
                 let routed = self.route_banks[0].route_count.one::<u32>()?;
                 let mut owner_counts = [0u32; 8];
-                self.route_banks[0].owner_counts.read(&mut owner_counts[..self.cfg.world as usize])?;
+                self.route_banks[0]
+                    .owner_counts
+                    .read(&mut owner_counts[..self.cfg.world as usize])?;
                 if crate::route_count::packed_count(
                     candidate_count,
                     &owner_counts[..self.cfg.world as usize],
-                )? != routed {
+                )? != routed
+                {
                     return Err("EXCHANGE_COUNT_MISMATCH".into());
                 }
-                Some((routed, crate::route_count::packed_rank_ranges(
-                    self.candidates,
-                    &owner_counts[..self.cfg.world as usize],
-                    &self.cfg.logical_owner_to_rank[..self.cfg.world as usize],
-                )?))
+                Some((
+                    routed,
+                    crate::route_count::packed_rank_ranges(
+                        self.candidates,
+                        &owner_counts[..self.cfg.world as usize],
+                        &self.cfg.logical_owner_to_rank[..self.cfg.world as usize],
+                    )?,
+                ))
             } else {
                 // LSA consumes the device counts and checks their sum/capacity
                 // before copying. No D2H count is needed for this route.
@@ -7353,7 +8204,10 @@ if lossless_bits.is_none(){
             };
             if trace_route {
                 eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=route_end routed={:?}", self.cfg.rank, self.depth, host_ranges.as_ref().map(|(rows, _)| rows));
-                eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=pack_end", self.cfg.rank, self.depth);
+                eprintln!(
+                    "MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=pack_end",
+                    self.cfg.rank, self.depth
+                );
             }
             if let Some(sequence) = generation {
                 // Reuse children/child_hashes only after pack has finished.
@@ -7361,9 +8215,13 @@ if lossless_bits.is_none(){
                 // retains the host-observed completion path.
                 if self.lsa_view.is_some() {
                     unsafe {
-                        self.route_banks[0].generation_done.retire_after_device_barrier(
-                            sequence, self.generation_stream.0, self.pack_done.0,
-                        )?;
+                        self.route_banks[0]
+                            .generation_done
+                            .retire_after_device_barrier(
+                                sequence,
+                                self.generation_stream.0,
+                                self.pack_done.0,
+                            )?;
                     }
                 } else {
                     if !self.route_banks[0].generation_done.poll(sequence)? {
@@ -7381,7 +8239,8 @@ if lossless_bits.is_none(){
                 }
             }
             let world = self.cfg.world;
-            let (local_offset, local_rows) = host_ranges.as_ref()
+            let (local_offset, local_rows) = host_ranges
+                .as_ref()
                 .map_or((0, 0), |(_, ranges)| ranges[self.cfg.rank as usize]);
             // The same bounded receive slot serves every XOR peer round.
             // All ranks enter even when their parent batch or payload is empty.
@@ -7395,36 +8254,55 @@ if lossless_bits.is_none(){
                 } else {
                     crate::route_count::exchange_peer(world, self.cfg.rank, round)?
                 };
-                let (remote_offset, remote_rows) = host_ranges.as_ref()
+                let (remote_offset, remote_rows) = host_ranges
+                    .as_ref()
                     .map_or((0, 0), |(_, ranges)| ranges[exchange_peer as usize]);
                 let lsa = self.lsa_view;
                 let rank_mode = self.rank_owner_mode();
                 let received = if self.cfg.world == 1 {
                     0
                 } else if lsa.is_some() {
-                    let logical_owner = self.cfg.logical_owner_to_rank
-                        .iter().position(|&rank| rank == exchange_peer)
+                    let logical_owner = self
+                        .cfg
+                        .logical_owner_to_rank
+                        .iter()
+                        .position(|&rank| rank == exchange_peer)
                         .ok_or("OWNER_MAP")? as u32;
-                    check(unsafe { cudaStreamWaitEvent(
-                        self.exchange_stream.0, self.pack_done.0, 0,
-                    ) })?;
+                    check(unsafe {
+                        cudaStreamWaitEvent(self.exchange_stream.0, self.pack_done.0, 0)
+                    })?;
                     if lsa_owner_recorded {
-                        check(unsafe { cudaStreamWaitEvent(
-                            self.exchange_stream.0,
-                            self.owner_consumed.as_ref().ok_or("LSA_OWNER_EVENT_MISSING")?.0,
-                            0,
-                        ) })?;
+                        check(unsafe {
+                            cudaStreamWaitEvent(
+                                self.exchange_stream.0,
+                                self.owner_consumed
+                                    .as_ref()
+                                    .ok_or("LSA_OWNER_EVENT_MISSING")?
+                                    .0,
+                                0,
+                            )
+                        })?;
                     }
                     check(unsafe {
                         mgbfs_nccl_lsa_exchange_rows(
-                            self.comm.0, self.route_banks[0].sorted_hashes.ptr,
-                            if self.shard_key_first.is_some(){std::ptr::null()}else{self.route_banks[0].packed_states.ptr}, self.route_banks[0].owner_counts.ptr.cast(),
+                            self.comm.0,
+                            self.route_banks[0].sorted_hashes.ptr,
+                            if self.shard_key_first.is_some() {
+                                std::ptr::null()
+                            } else {
+                                self.route_banks[0].packed_states.ptr
+                            },
+                            self.route_banks[0].owner_counts.ptr.cast(),
                             self.collective_recv.ptr.cast(),
-                            logical_owner, exchange_peer, packet_stride as u32,
+                            logical_owner,
+                            exchange_peer,
+                            packet_stride as u32,
                             self.exchange_stream.0,
                         )
                     })?;
-                    check(unsafe { cudaEventRecord(self.exchange_done.0, self.exchange_stream.0) })?;
+                    check(unsafe {
+                        cudaEventRecord(self.exchange_done.0, self.exchange_stream.0)
+                    })?;
                     if trace_route {
                         eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=lsa_exchange_queued", self.cfg.rank, self.depth);
                     }
@@ -7433,85 +8311,149 @@ if lossless_bits.is_none(){
                     0
                 } else {
                     let communication = self.exchange_stream.0;
-                    let received = if let Some(h)=self.shard_key_first.as_ref().filter(|h|self.cfg.world==2 && h.peer_metadata_enabled) {
+                    let received = if let Some(h) = self
+                        .shard_key_first
+                        .as_ref()
+                        .filter(|h| self.cfg.world == 2 && h.peer_metadata_enabled)
+                    {
                         // Both peers inspect the same two counts and sticky status
                         // words before posting any variable-sized payload. The
                         // fixed metadata lease drains before its regeneration reuse.
-                        check(unsafe{mgbfs_device_store_u32(h.peer_metadata.ptr.cast(),remote_rows,communication)})?;
-                        check(unsafe{cudaMemcpyAsync(h.peer_metadata.at(4),self.ring.at(48),4,3,communication)})?;
-                        check(unsafe{mgbfs_nccl_send_recv(self.comm.0,h.peer_metadata.ptr,8,exchange_peer,h.peer_metadata.at(8),8,communication)})?;
+                        check(unsafe {
+                            mgbfs_device_store_u32(
+                                h.peer_metadata.ptr.cast(),
+                                remote_rows,
+                                communication,
+                            )
+                        })?;
+                        check(unsafe {
+                            cudaMemcpyAsync(
+                                h.peer_metadata.at(4),
+                                self.ring.at(48),
+                                4,
+                                3,
+                                communication,
+                            )
+                        })?;
+                        check(unsafe {
+                            mgbfs_nccl_send_recv(
+                                self.comm.0,
+                                h.peer_metadata.ptr,
+                                8,
+                                exchange_peer,
+                                h.peer_metadata.at(8),
+                                8,
+                                communication,
+                            )
+                        })?;
                         self.wait_comm_stream(communication)?;
-                        let m=h.peer_metadata.one::<[u32;4]>()?;
-                        let fatal=m[1].max(m[3]);
-                        if fatal!=0{return Err(format!("GROUP_INITIAL_EXCHANGE_FATAL_{fatal}"));}
-                        if m[0]>self.candidates || m[2]>self.candidates{return Err("GROUP_INITIAL_EXCHANGE_COUNT_CAPACITY".into());}
-                        let incoming=m[2];
-                        check(unsafe{mgbfs_device_store_u32(self.recv_count.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr.cast(),incoming,communication)})?;
+                        let m = h.peer_metadata.one::<[u32; 4]>()?;
+                        let fatal = m[1].max(m[3]);
+                        if fatal != 0 {
+                            return Err(format!("GROUP_INITIAL_EXCHANGE_FATAL_{fatal}"));
+                        }
+                        if m[0] > self.candidates || m[2] > self.candidates {
+                            return Err("GROUP_INITIAL_EXCHANGE_COUNT_CAPACITY".into());
+                        }
+                        let incoming = m[2];
+                        check(unsafe {
+                            mgbfs_device_store_u32(
+                                self.recv_count
+                                    .as_ref()
+                                    .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                                    .ptr
+                                    .cast(),
+                                incoming,
+                                communication,
+                            )
+                        })?;
                         incoming
                     } else {
-                    // The count is a launch argument, not a borrowed host
-                    // slice. Publish it on the consuming stream so the NCCL
-                    // size exchange follows the store without a host drain.
-                    check(unsafe { mgbfs_device_store_u32(
-                        self.collective_send.ptr.cast(), remote_rows, communication,
-                    ) })?;
-                    check(unsafe {
-                        mgbfs_nccl_send_recv(
-                            self.comm.0,
-                            self.collective_send.ptr,
-                            4,
-                            exchange_peer,
-                            self.recv_count.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr,
-                            4,
-                            communication,
-                        )
-                    })?;
-                    self.wait_comm_stream(communication)?;
-                    let received = self.recv_count.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
-                        .one::<u32>()?;
-                    if received > self.candidates {
-                        return Err("EXCHANGE_CAPACITY".into());
-                    }
-                    received
+                        // The count is a launch argument, not a borrowed host
+                        // slice. Publish it on the consuming stream so the NCCL
+                        // size exchange follows the store without a host drain.
+                        check(unsafe {
+                            mgbfs_device_store_u32(
+                                self.collective_send.ptr.cast(),
+                                remote_rows,
+                                communication,
+                            )
+                        })?;
+                        check(unsafe {
+                            mgbfs_nccl_send_recv(
+                                self.comm.0,
+                                self.collective_send.ptr,
+                                4,
+                                exchange_peer,
+                                self.recv_count
+                                    .as_ref()
+                                    .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                                    .ptr,
+                                4,
+                                communication,
+                            )
+                        })?;
+                        self.wait_comm_stream(communication)?;
+                        let received = self
+                            .recv_count
+                            .as_ref()
+                            .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                            .one::<u32>()?;
+                        if received > self.candidates {
+                            return Err("EXCHANGE_CAPACITY".into());
+                        }
+                        received
                     };
                     check(unsafe {
                         mgbfs_nccl_send_recv(
                             self.comm.0,
-                            self.route_banks[0].sorted_hashes.at(remote_offset as usize * 16),
+                            self.route_banks[0]
+                                .sorted_hashes
+                                .at(remote_offset as usize * 16),
                             u64::from(remote_rows) * 16,
                             exchange_peer,
-                            self.recv_hashes.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr,
+                            self.recv_hashes
+                                .as_ref()
+                                .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                                .ptr,
                             u64::from(received) * 16,
                             communication,
                         )
                     })?;
                     if self.shard_key_first.is_none() {
-                    check(unsafe {
-                        mgbfs_nccl_send_recv(
-                            self.comm.0,
-                            self.route_banks[0].packed_states
-                                .at(remote_offset as usize * packet_stride),
-                            u64::from(remote_rows) * packet_stride as u64,
-                            exchange_peer,
-                            self.recv_states.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr,
-                            u64::from(received) * packet_stride as u64,
-                            communication,
-                        )
-                    })?;
+                        check(unsafe {
+                            mgbfs_nccl_send_recv(
+                                self.comm.0,
+                                self.route_banks[0]
+                                    .packed_states
+                                    .at(remote_offset as usize * packet_stride),
+                                u64::from(remote_rows) * packet_stride as u64,
+                                exchange_peer,
+                                self.recv_states
+                                    .as_ref()
+                                    .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                                    .ptr,
+                                u64::from(received) * packet_stride as u64,
+                                communication,
+                            )
+                        })?;
                     }
                     check(unsafe { cudaEventRecord(self.exchange_done.0, communication) })?;
                     received
                 };
-                if let Some(parent_extent) =
-                    parent.filter(|_| round == 1 && self.hash_first.is_none() && self.shard_key_first.is_none())
-                {
+                if let Some(parent_extent) = parent.filter(|_| {
+                    round == 1 && self.hash_first.is_none() && self.shard_key_first.is_none()
+                }) {
                     if archive.is_some()
                         || (self.archived_depth == Some(self.depth)
                             && !archive_released[extent_index])
                     {
                         check(unsafe {
-                            cudaStreamWaitEvent(s, self.archive_done[extent_index].0,
-                                u32::from(graph_mode)) // cudaEventWaitExternal during capture
+                            cudaStreamWaitEvent(
+                                s,
+                                self.archive_done[extent_index].0,
+                                u32::from(graph_mode),
+                            ) // cudaEventWaitExternal during capture
                         })?;
                         archive_released[extent_index] = true;
                     }
@@ -7534,18 +8476,28 @@ if lossless_bits.is_none(){
                 // selection metadata and the post-owner vote gate regeneration
                 // and retirement. No retirement occurs in this pre-owner block.
                 // Keep the legacy vote for all other transports/configurations.
-                if round == 1 && self.hash_first.is_none()
-                    && !(self.lsa_view.is_none() && self.shard_key_first.as_ref()
-                        .is_some_and(|h|h.reuse_preowner_status)) {
+                if round == 1
+                    && self.hash_first.is_none()
+                    && !(self.lsa_view.is_none()
+                        && self
+                            .shard_key_first
+                            .as_ref()
+                            .is_some_and(|h| h.reuse_preowner_status))
+                {
                     if world > 1 {
                         // The vote must follow this round's P2P on the same
                         // communicator, including zero-payload exchange.
                         check(unsafe { cudaStreamWaitEvent(s, self.exchange_done.0, 0) })?;
                     }
                     if let Some(view) = lsa {
-                        check(unsafe { mgbfs_owner_import_transport_fatal(
-                            view.fatal, self.ring.ptr.cast(), self.control.ptr.cast(), s,
-                        ) })?;
+                        check(unsafe {
+                            mgbfs_owner_import_transport_fatal(
+                                view.fatal,
+                                self.ring.ptr.cast(),
+                                self.control.ptr.cast(),
+                                s,
+                            )
+                        })?;
                     }
                     if trace_route {
                         eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=retire_import_queued", self.cfg.rank, self.depth);
@@ -7554,10 +8506,16 @@ if lossless_bits.is_none(){
                         // The common result poisons ring/control on-device before
                         // any rank can commit this owner epoch. Host/API errors
                         // use the cancellation sideband instead of a batch vote.
-                        check(unsafe { mgbfs_owner_lsa_fatal_gate(
-                            self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
-                            self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
-                        ) })?;
+                        check(unsafe {
+                            mgbfs_owner_lsa_fatal_gate(
+                                self.comm.0,
+                                self.ring.ptr.cast(),
+                                self.control.ptr.cast(),
+                                self.collective_send.ptr.cast(),
+                                self.collective_recv.ptr.cast(),
+                                s,
+                            )
+                        })?;
                         if trace_route {
                             eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=preowner_vote_queued", self.cfg.rank, self.depth);
                         }
@@ -7571,14 +8529,25 @@ if lossless_bits.is_none(){
                 if round != 1 || self.hash_first.is_some() {
                     if let Some(view) = lsa {
                         check(unsafe { cudaStreamWaitEvent(s, self.exchange_done.0, 0) })?;
-                        check(unsafe { mgbfs_owner_import_transport_fatal(
-                            view.fatal, self.ring.ptr.cast(), self.control.ptr.cast(), s,
-                        ) })?;
+                        check(unsafe {
+                            mgbfs_owner_import_transport_fatal(
+                                view.fatal,
+                                self.ring.ptr.cast(),
+                                self.control.ptr.cast(),
+                                s,
+                            )
+                        })?;
                         if device_epoch {
-                            check(unsafe { mgbfs_owner_lsa_fatal_gate(
-                                self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
-                                self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
-                            ) })?;
+                            check(unsafe {
+                                mgbfs_owner_lsa_fatal_gate(
+                                    self.comm.0,
+                                    self.ring.ptr.cast(),
+                                    self.control.ptr.cast(),
+                                    self.collective_send.ptr.cast(),
+                                    self.collective_recv.ptr.cast(),
+                                    s,
+                                )
+                            })?;
                         } else if self.all_max_ring_fatal()? != 0 {
                             return Err("GROUP_LSA_TRANSPORT_FATAL".into());
                         }
@@ -7587,29 +8556,51 @@ if lossless_bits.is_none(){
                     }
                 }
                 let local_states: *const u8 = unsafe {
-                    self.route_banks[0].packed_states
+                    self.route_banks[0]
+                        .packed_states
                         .at(local_offset as usize * packet_stride)
                         .cast()
                 };
                 let local_hashes: *const c_void = unsafe {
-                    self.route_banks[0].sorted_hashes.at(local_offset as usize * 16)
+                    self.route_banks[0]
+                        .sorted_hashes
+                        .at(local_offset as usize * 16)
                 };
-                let (remote_states, remote_hashes, remote_count):
-                    (*const u8, *const c_void, *const u32) = if let Some(view) = lsa {
-                        (view.states, view.hashes, view.count)
-                    } else {
-                        (self.recv_states.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr.cast(),
-                         self.recv_hashes.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr,
-                         self.recv_count.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr.cast())
-                    };
+                let (remote_states, remote_hashes, remote_count): (
+                    *const u8,
+                    *const c_void,
+                    *const u32,
+                ) = if let Some(view) = lsa {
+                    (view.states, view.hashes, view.count)
+                } else {
+                    (
+                        self.recv_states
+                            .as_ref()
+                            .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                            .ptr
+                            .cast(),
+                        self.recv_hashes
+                            .as_ref()
+                            .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                            .ptr,
+                        self.recv_count
+                            .as_ref()
+                            .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                            .ptr
+                            .cast(),
+                    )
+                };
                 let remote_ready = self.exchange_done.0;
                 let world = self.cfg.world;
                 if trace_route {
                     eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=owner_begin received={received}", self.cfg.rank, self.depth);
                 }
                 let mut batch_error = process_owner_pair(
-                    if device_epoch { OwnerFailurePolicy::CancelGroup }
-                    else { OwnerFailurePolicy::CollectiveVote },
+                    if device_epoch {
+                        OwnerFailurePolicy::CancelGroup
+                    } else {
+                        OwnerFailurePolicy::CollectiveVote
+                    },
                     (
                         0,
                         (
@@ -7618,48 +8609,95 @@ if lossless_bits.is_none(){
                             if round == 1 { local_rows } else { 0 },
                         ),
                     ),
-                    (
-                        1,
-                        (remote_states, remote_hashes, received),
-                    ),
+                    (1, (remote_states, remote_hashes, received)),
                     |(group, (states, hashes, rows))| {
                         if rank_mode {
                             if !crate::route_count::rank_owner_group_active(world, round, group)? {
                                 return Ok(());
                             }
                             #[cfg(debug_assertions)]
-                            if group == 1 && round == 1 && scheduled_rounds > 1
+                            if group == 1
+                                && round == 1
+                                && scheduled_rounds > 1
                                 && TEST_OWNER_HOST_FAULT.with(|flag| flag.replace(false))
                             {
                                 return Err("TEST_INJECTED_OWNER_HOST_ERROR".into());
                             }
-                            let window = self.owner_window.as_ref().ok_or("OWNER_WINDOW_MISSING")?;
+                            let window =
+                                self.owner_window.as_ref().ok_or("OWNER_WINDOW_MISSING")?;
                             let (states, hashes, begin, rows, source_rows) = if group == 0 {
-                                (self.route_banks[0].packed_states.ptr as *const u8,
-                                 self.route_banks[0].sorted_hashes.ptr as *const c_void,
-                                 window.ptr as *const u32,
-                                 unsafe { window.at(4) } as *const u32,
-                                 self.route_banks[0].route_count.ptr as *const u32)
+                                (
+                                    self.route_banks[0].packed_states.ptr as *const u8,
+                                    self.route_banks[0].sorted_hashes.ptr as *const c_void,
+                                    window.ptr as *const u32,
+                                    unsafe { window.at(4) } as *const u32,
+                                    self.route_banks[0].route_count.ptr as *const u32,
+                                )
                             } else {
-                                (remote_states, remote_hashes,
-                                 unsafe { window.at(8) } as *const u32,
-                                 remote_count, remote_count)
+                                (
+                                    remote_states,
+                                    remote_hashes,
+                                    unsafe { window.at(8) } as *const u32,
+                                    remote_count,
+                                    remote_count,
+                                )
                             };
                             if let Some(ab) = self.shard_ab.as_ref() {
                                 if self.shard_key_first.is_some() {
-                                    let handle=ab.handle;let bound=ab.input_bound;
-                                    check(unsafe {mgbfs_shard_ab_pipeline_select(handle,hashes,begin,rows,source_rows,bound)})?;
-                                    return self.materialize_shard_selected(parent,extent_offset,parents,round,group,remote_offset);
+                                    let handle = ab.handle;
+                                    let bound = ab.input_bound;
+                                    check(unsafe {
+                                        mgbfs_shard_ab_pipeline_select(
+                                            handle,
+                                            hashes,
+                                            begin,
+                                            rows,
+                                            source_rows,
+                                            bound,
+                                        )
+                                    })?;
+                                    return self.materialize_shard_selected(
+                                        parent,
+                                        extent_offset,
+                                        parents,
+                                        round,
+                                        group,
+                                        remote_offset,
+                                    );
                                 }
-                                return check(unsafe { mgbfs_shard_ab_pipeline_push(
-                                    ab.handle, hashes, states, begin, rows, source_rows,
-                                    ab.input_bound) });
+                                return check(unsafe {
+                                    mgbfs_shard_ab_pipeline_push(
+                                        ab.handle,
+                                        hashes,
+                                        states,
+                                        begin,
+                                        rows,
+                                        source_rows,
+                                        ab.input_bound,
+                                    )
+                                });
                             }
                             if self.native_rank.is_some() {
-                                return self.commit_rank_native_batch(states, hashes, begin, rows, source_rows, group, None);
+                                return self.commit_rank_native_batch(
+                                    states,
+                                    hashes,
+                                    begin,
+                                    rows,
+                                    source_rows,
+                                    group,
+                                    None,
+                                );
                             }
                             #[cfg(feature = "library-owner")]
-                            return self.commit_rank_library_batch(states, hashes, begin, rows, source_rows, group, None);
+                            return self.commit_rank_library_batch(
+                                states,
+                                hashes,
+                                begin,
+                                rows,
+                                source_rows,
+                                group,
+                                None,
+                            );
                             #[cfg(not(feature = "library-owner"))]
                             return Err("RANK_OWNER_BACKEND_MISSING".into());
                         }
@@ -7683,20 +8721,33 @@ if lossless_bits.is_none(){
                     // A host/API error is not a device logical fatal: this rank
                     // may be unable to issue the next collective. Outer advance
                     // publishes cancellation before serialized communicator abort.
-                    if let Some(error) = batch_error { return Err(error); }
+                    if let Some(error) = batch_error {
+                        return Err(error);
+                    }
                     // All ranks issue the post-owner vote, including an empty
                     // peer round. Its device result predicates the next LSA
                     // rendezvous without returning a count to the host.
-                    check(unsafe { mgbfs_owner_lsa_fatal_gate(
-                        self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
-                        self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
-                    ) })?;
+                    check(unsafe {
+                        mgbfs_owner_lsa_fatal_gate(
+                            self.comm.0,
+                            self.ring.ptr.cast(),
+                            self.control.ptr.cast(),
+                            self.collective_send.ptr.cast(),
+                            self.collective_recv.ptr.cast(),
+                            s,
+                        )
+                    })?;
                 }
-                if lsa.is_some() && self.hash_first.is_none() && (batch_error.is_none() || device_epoch) {
+                if lsa.is_some()
+                    && self.hash_first.is_none()
+                    && (batch_error.is_none() || device_epoch)
+                {
                     // Every rank waits for its own receive-slot consumer before
                     // entering the next all-rank LSA barrier. A record failure
                     // must participate in the existing group error vote.
-                    let recorded = self.owner_consumed.as_ref()
+                    let recorded = self
+                        .owner_consumed
+                        .as_ref()
                         .ok_or_else(|| "LSA_OWNER_EVENT_MISSING".to_string())
                         .and_then(|event| check(unsafe { cudaEventRecord(event.0, s) }));
                     match recorded {
@@ -7711,29 +8762,52 @@ if lossless_bits.is_none(){
                         return Err(error);
                     }
                 } else {
-                    if self.lsa_view.is_none() && self.shard_key_first.as_ref().is_some_and(|h|h.combined_status) {
+                    if self.lsa_view.is_none()
+                        && self
+                            .shard_key_first
+                            .as_ref()
+                            .is_some_and(|h| h.combined_status)
+                    {
                         // Fuse host enqueue status with sticky GPU regeneration failure.
                         // This all-rank gate is before current-parent retirement and
                         // before any publication. Failed peer responses can affect only
                         // the unfinished future; parents remain available for INCOMPLETE.
-                        self.collective_send.put_u32(u32::from(batch_error.is_some()))?;
-                        check(unsafe {mgbfs_owner_import_transport_fatal(self.collective_send.ptr.cast(),self.ring.ptr.cast(),self.control.ptr.cast(),s)})?;
-                        let code=self.all_max_ring_fatal()?;
-                        if code!=0 {return Err(batch_error.unwrap_or_else(||format!("GROUP_STATE_RING_RETIRE_FATAL_{code}")));}
+                        self.collective_send
+                            .put_u32(u32::from(batch_error.is_some()))?;
+                        check(unsafe {
+                            mgbfs_owner_import_transport_fatal(
+                                self.collective_send.ptr.cast(),
+                                self.ring.ptr.cast(),
+                                self.control.ptr.cast(),
+                                s,
+                            )
+                        })?;
+                        let code = self.all_max_ring_fatal()?;
+                        if code != 0 {
+                            return Err(batch_error.unwrap_or_else(|| {
+                                format!("GROUP_STATE_RING_RETIRE_FATAL_{code}")
+                            }));
+                        }
                     } else {
-                    vote_group_error(
-                        batch_error.map_or(Ok(()), Err),
-                        |failed| Ok(self.all_max(u32::from(failed))? != 0),
-                        "REMOTE_OWNER_BATCH_FATAL".into(),
-                    )?;
+                        vote_group_error(
+                            batch_error.map_or(Ok(()), Err),
+                            |failed| Ok(self.all_max(u32::from(failed))? != 0),
+                            "REMOTE_OWNER_BATCH_FATAL".into(),
+                        )?;
                     }
                 }
                 if self.hash_first.is_some() {
                     self.materialize_hash_first(parent, extent_offset, parents, round)?;
                     if lsa.is_some() {
-                        check(unsafe { cudaEventRecord(
-                            self.owner_consumed.as_ref().ok_or("LSA_OWNER_EVENT_MISSING")?.0, s,
-                        ) })?;
+                        check(unsafe {
+                            cudaEventRecord(
+                                self.owner_consumed
+                                    .as_ref()
+                                    .ok_or("LSA_OWNER_EVENT_MISSING")?
+                                    .0,
+                                s,
+                            )
+                        })?;
                         lsa_owner_recorded = true;
                     }
                 }
@@ -7764,35 +8838,65 @@ if lossless_bits.is_none(){
                     })?;
                 }
                 if device_epoch {
-                    check(unsafe { mgbfs_owner_lsa_fatal_gate(
-                        self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
-                        self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
-                    ) })?;
+                    check(unsafe {
+                        mgbfs_owner_lsa_fatal_gate(
+                            self.comm.0,
+                            self.ring.ptr.cast(),
+                            self.control.ptr.cast(),
+                            self.collective_send.ptr.cast(),
+                            self.collective_recv.ptr.cast(),
+                            s,
+                        )
+                    })?;
                 } else {
-                    let retirement_error=self.all_max_ring_fatal()?;
-                    if retirement_error!=0{return Err(format!("GROUP_STATE_RING_RETIRE_FATAL_{retirement_error}"));}
+                    let retirement_error = self.all_max_ring_fatal()?;
+                    if retirement_error != 0 {
+                        return Err(format!("GROUP_STATE_RING_RETIRE_FATAL_{retirement_error}"));
+                    }
                 }
             }
-            if graph_mode && ((scheduled_round+1)%32 == 0 || scheduled_round+1 == scheduled_rounds) {
-                self.batch_graph.as_mut().ok_or("BATCH_GRAPH_MISSING")?
-                    .submit(scheduled_round%32+1)?;
+            if graph_mode
+                && ((scheduled_round + 1) % 32 == 0 || scheduled_round + 1 == scheduled_rounds)
+            {
+                self.batch_graph
+                    .as_mut()
+                    .ok_or("BATCH_GRAPH_MISSING")?
+                    .submit(scheduled_round % 32 + 1)?;
                 // Captured events encode graph edges; direct tail batches need
                 // an ordinary completion record after the launched window.
-                check(unsafe { cudaEventRecord(self.owner_consumed.as_ref()
-                    .ok_or("LSA_OWNER_EVENT_MISSING")?.0, s) })?;
+                check(unsafe {
+                    cudaEventRecord(
+                        self.owner_consumed
+                            .as_ref()
+                            .ok_or("LSA_OWNER_EVENT_MISSING")?
+                            .0,
+                        s,
+                    )
+                })?;
                 if scheduled_round + 1 == (scheduled_rounds / 32) * 32
-                    && scheduled_round + 1 < scheduled_rounds {
+                    && scheduled_round + 1 < scheduled_rounds
+                {
                     // A graph launch does not enqueue its captured kernels on
                     // the original generation stream. Its first direct tail
                     // producer must not overwrite shared children/hash buffers
                     // while the launched window still reads them.
-                    check(unsafe { cudaStreamWaitEvent(self.generation_stream.0,
-                        self.owner_consumed.as_ref()
-                            .ok_or("LSA_OWNER_EVENT_MISSING")?.0, 0) })?;
+                    check(unsafe {
+                        cudaStreamWaitEvent(
+                            self.generation_stream.0,
+                            self.owner_consumed
+                                .as_ref()
+                                .ok_or("LSA_OWNER_EVENT_MISSING")?
+                                .0,
+                            0,
+                        )
+                    })?;
                 }
             }
-            if device_epoch && (!graph_mode || (scheduled_round+1)%32 == 0
-                || scheduled_round+1 == scheduled_rounds) {
+            if device_epoch
+                && (!graph_mode
+                    || (scheduled_round + 1) % 32 == 0
+                    || scheduled_round + 1 == scheduled_rounds)
+            {
                 let slot = epoch_serial % self.epoch_completed.len();
                 check(unsafe { cudaEventRecord(self.epoch_completed[slot].0, s) })?;
                 self.epoch_outstanding.push_back(slot);
@@ -7835,19 +8939,51 @@ if lossless_bits.is_none(){
             }
         }
         if let Some(ab) = self.shard_ab.as_ref() {
-            let mut keys = std::ptr::null_mut();let mut states = std::ptr::null_mut();let mut count = std::ptr::null();
-            check(unsafe { mgbfs_shard_ab_pipeline_finalize(ab.handle,&mut keys,&mut states,&mut count) })?;
-            check(unsafe {mgbfs_shard_ab_pipeline_prepare_publish(ab.handle,self.ring.ptr,
-                self.control.ptr,self.extent.ptr,self.layer_count.ptr.cast(),self.cfg.layer_capacity)})?;
-            check(unsafe {cudaStreamSynchronize(s)})?;
-            let prepared_control=self.control.one::<Control>()?;
-            let prepared_ring=self.ring.one::<Ring>()?;
-            let prepared_error=self.all_max(prepared_control.error.max(prepared_ring.fatal))?;
-            if prepared_error!=0{return Err(format!("SHARD_AB_PREPARE_FATAL_{prepared_error}"));}
-            check(unsafe { mgbfs_shard_ab_pipeline_publish(ab.handle,self.ring.ptr,self.control.ptr,self.extent.ptr,
-                self.states.ptr.cast(),self.prev.ptr,self.layer_count.ptr.cast(),self.cfg.layer_capacity,
-                self.next_extent_count.as_ref().ok_or("NEXT_EXTENT_COUNT_MISSING")?.ptr.cast(),
-                self.next_extents.as_ref().ok_or("NEXT_EXTENTS_MISSING")?.ptr,self.route_banks[0].route_count.ptr.cast()) })?;
+            let mut keys = std::ptr::null_mut();
+            let mut states = std::ptr::null_mut();
+            let mut count = std::ptr::null();
+            check(unsafe {
+                mgbfs_shard_ab_pipeline_finalize(ab.handle, &mut keys, &mut states, &mut count)
+            })?;
+            check(unsafe {
+                mgbfs_shard_ab_pipeline_prepare_publish(
+                    ab.handle,
+                    self.ring.ptr,
+                    self.control.ptr,
+                    self.extent.ptr,
+                    self.layer_count.ptr.cast(),
+                    self.cfg.layer_capacity,
+                )
+            })?;
+            check(unsafe { cudaStreamSynchronize(s) })?;
+            let prepared_control = self.control.one::<Control>()?;
+            let prepared_ring = self.ring.one::<Ring>()?;
+            let prepared_error = self.all_max(prepared_control.error.max(prepared_ring.fatal))?;
+            if prepared_error != 0 {
+                return Err(format!("SHARD_AB_PREPARE_FATAL_{prepared_error}"));
+            }
+            check(unsafe {
+                mgbfs_shard_ab_pipeline_publish(
+                    ab.handle,
+                    self.ring.ptr,
+                    self.control.ptr,
+                    self.extent.ptr,
+                    self.states.ptr.cast(),
+                    self.prev.ptr,
+                    self.layer_count.ptr.cast(),
+                    self.cfg.layer_capacity,
+                    self.next_extent_count
+                        .as_ref()
+                        .ok_or("NEXT_EXTENT_COUNT_MISSING")?
+                        .ptr
+                        .cast(),
+                    self.next_extents
+                        .as_ref()
+                        .ok_or("NEXT_EXTENTS_MISSING")?
+                        .ptr,
+                    self.route_banks[0].route_count.ptr.cast(),
+                )
+            })?;
         }
         if self.rank_owner_mode() {
             let ready = (|| -> Result<Vec<Extent>> {
@@ -7855,46 +8991,81 @@ if lossless_bits.is_none(){
                 let control = self.control.one::<Control>()?;
                 let ring = self.ring.one::<Ring>()?;
                 if control.error != 0 || ring.fatal != 0 {
-                    return Err(format!("LIBRARY_RANK_DEPTH_FATAL_{}_{}", control.error, ring.fatal));
+                    return Err(format!(
+                        "LIBRARY_RANK_DEPTH_FATAL_{}_{}",
+                        control.error, ring.fatal
+                    ));
                 }
-                let count = self.next_extent_count.as_ref()
-                    .ok_or("NEXT_EXTENT_COUNT_MISSING")?.one::<u32>()? as usize;
+                let count = self
+                    .next_extent_count
+                    .as_ref()
+                    .ok_or("NEXT_EXTENT_COUNT_MISSING")?
+                    .one::<u32>()? as usize;
                 if count > 2 || !self.next.is_empty() {
                     return Err("NEXT_EXTENT_CAPACITY".into());
                 }
                 let mut extents = vec![Extent::default(); count];
-                self.next_extents.as_ref().ok_or("NEXT_EXTENTS_MISSING")?
+                self.next_extents
+                    .as_ref()
+                    .ok_or("NEXT_EXTENTS_MISSING")?
                     .read(&mut extents)?;
-                if extents.iter().any(|e| e.ready != 1 || e.count == 0 ||
-                    e.granted_rows as u64 != e.count) ||
-                    extents.iter().map(|e| e.count).sum::<u64>() !=
-                        u64::from(self.layer_count.one::<u32>()?) {
+                if extents
+                    .iter()
+                    .any(|e| e.ready != 1 || e.count == 0 || e.granted_rows as u64 != e.count)
+                    || extents.iter().map(|e| e.count).sum::<u64>()
+                        != u64::from(self.layer_count.one::<u32>()?)
+                {
                     return Err("NEXT_EXTENT_MISMATCH".into());
                 }
                 Ok(extents)
             })();
             if self.all_max(u32::from(ready.is_err()))? != 0 {
-                return Err(ready.err().unwrap_or_else(|| "REMOTE_NEXT_EXTENT_FATAL".into()));
+                return Err(ready
+                    .err()
+                    .unwrap_or_else(|| "REMOTE_NEXT_EXTENT_FATAL".into()));
             }
             self.next.extend(ready?);
-            if self.shard_ab.is_some()&&std::env::var_os("MGBFS_TEST_VERIFY_STATE_HASH_ALIGNMENT").is_some(){
-                if std::env::var("MGBFS_SHARD_AB_DEDUP").ok().as_deref()==Some("SORT_MERGE"){return Err("HASH_ALIGNMENT_REQUIRES_HASH_ORDER".into());}
-                let mut ordinal=0usize;
+            if self.shard_ab.is_some()
+                && std::env::var_os("MGBFS_TEST_VERIFY_STATE_HASH_ALIGNMENT").is_some()
+            {
+                if std::env::var("MGBFS_SHARD_AB_DEDUP").ok().as_deref() == Some("SORT_MERGE") {
+                    return Err("HASH_ALIGNMENT_REQUIRES_HASH_ORDER".into());
+                }
+                let mut ordinal = 0usize;
                 for extent in &self.next {
-                    let mut at=0u64;
-                    while at<extent.count {
-                        let n=(extent.count-at).min(u64::from(self.cfg.batch)) as u32;
-                        check(unsafe{mgbfs_hash_run(self.archive_hash.0,self.states.at((extent.begin+at) as usize*self.stride).cast(),self.archive_hashes.ptr.cast(),n,s)})?;
-                        check(unsafe{mgbfs_debug_hashes_equal(self.prev.at(ordinal*16),self.archive_hashes.ptr,n,self.ring.at(48).cast(),s)})?;
-                        at+=u64::from(n);ordinal+=n as usize;
+                    let mut at = 0u64;
+                    while at < extent.count {
+                        let n = (extent.count - at).min(u64::from(self.cfg.batch)) as u32;
+                        check(unsafe {
+                            mgbfs_hash_run(
+                                self.archive_hash.0,
+                                self.states
+                                    .at((extent.begin + at) as usize * self.stride)
+                                    .cast(),
+                                self.archive_hashes.ptr.cast(),
+                                n,
+                                s,
+                            )
+                        })?;
+                        check(unsafe {
+                            mgbfs_debug_hashes_equal(
+                                self.prev.at(ordinal * 16),
+                                self.archive_hashes.ptr,
+                                n,
+                                self.ring.at(48).cast(),
+                                s,
+                            )
+                        })?;
+                        at += u64::from(n);
+                        ordinal += n as usize;
                     }
                 }
-                check(unsafe{cudaStreamSynchronize(s)})?;let error=self.all_max(self.ring.one::<Ring>()?.fatal)?;
-                if error!=0{return Err(format!("STATE_HASH_ALIGNMENT_FATAL_{error}"));}
+                check(unsafe { cudaStreamSynchronize(s) })?;
+                let error = self.all_max(self.ring.one::<Ring>()?.fatal)?;
+                if error != 0 {
+                    return Err(format!("STATE_HASH_ALIGNMENT_FATAL_{error}"));
+                }
             }
-
-
-
         }
         #[cfg(feature = "library-owner")]
         if let Some(library) = self.library_owner.as_mut() {
@@ -7938,7 +9109,9 @@ if lossless_bits.is_none(){
         &mut self,
         mut archive: Option<&mut crate::pinned_archive::PinnedArchive>,
     ) -> Result<bool> {
-        if self.shard_ab.is_some() { return self.advance_shard_ab_inner(archive); }
+        if self.shard_ab.is_some() {
+            return self.advance_shard_ab_inner(archive);
+        }
 
         let _native_scope = NativeCallMarker::enter(line!());
         self.ensure_not_cancelled()?;
@@ -8635,7 +9808,7 @@ if lossless_bits.is_none(){
         count: u64,
         extent_index: usize,
     ) -> Result<()> {
-        self.archive_range_inner(archive,begin,count,extent_index,false)
+        self.archive_range_inner(archive, begin, count, extent_index, false)
     }
     fn archive_range_inner(
         &mut self,
@@ -8647,7 +9820,9 @@ if lossless_bits.is_none(){
     ) -> Result<()> {
         let compact_permutation = self.permutation_n == u32::try_from(archive.width).ok();
         let _archive_range = TraceRange::new(
-            std::env::var_os("MGBFS_TRACE_RANGES").is_some(), b"mgbfs.archive_d2h\0");
+            std::env::var_os("MGBFS_TRACE_RANGES").is_some(),
+            b"mgbfs.archive_d2h\0",
+        );
         let s = self.archive_stream.0;
         let mut offset = 0u64;
         while offset < count {
@@ -8656,21 +9831,28 @@ if lossless_bits.is_none(){
             // uses its batch-sized device scratch buffer.
             let rows = if archive.state_only && self.width == archive.width {
                 archive.rows
-            } else { archive.rows.min(self.cfg.batch) };
+            } else {
+                archive.rows.min(self.cfg.batch)
+            };
             let n = u64::from(rows).min(count - offset) as u32;
-            let slot = archive.acquire_cancellable(||
-                !snapshot && (self.ensure_not_cancelled().is_err() ||
-                self.failure_report.as_ref().is_some_and(|flag|
-                    flag.load(std::sync::atomic::Ordering::Acquire)==2)))?;
+            let slot = archive.acquire_cancellable(|| {
+                !snapshot
+                    && (self.ensure_not_cancelled().is_err()
+                        || self.failure_report.as_ref().is_some_and(|flag| {
+                            flag.load(std::sync::atomic::Ordering::Acquire) == 2
+                        }))
+            })?;
             let copied = (|| unsafe {
                 let states = self.states.at((begin + offset) as usize * self.stride);
-                if !archive.state_only { check(mgbfs_hash_run(
-                    self.archive_hash.0,
-                    states.cast(),
-                    self.archive_hashes.ptr.cast(),
-                    n,
-                    s,
-                ))?; }
+                if !archive.state_only {
+                    check(mgbfs_hash_run(
+                        self.archive_hash.0,
+                        states.cast(),
+                        self.archive_hashes.ptr.cast(),
+                        n,
+                        s,
+                    ))?;
+                }
                 if compact_permutation && self.width != archive.width && !snapshot {
                     check(mgbfs_archive_pack_permutation_u8(
                         archive.width as u32,
@@ -8700,13 +9882,15 @@ if lossless_bits.is_none(){
                         s,
                     ))?;
                 }
-                if !archive.state_only { check(cudaMemcpyAsync(
-                    slot.ptr.cast::<u8>().add(n as usize * archive.width).cast(),
-                    self.archive_hashes.ptr,
-                    n as usize * 16,
-                    2,
-                    s,
-                ))?; }
+                if !archive.state_only {
+                    check(cudaMemcpyAsync(
+                        slot.ptr.cast::<u8>().add(n as usize * archive.width).cast(),
+                        self.archive_hashes.ptr,
+                        n as usize * 16,
+                        2,
+                        s,
+                    ))?;
+                }
                 check(cudaEventRecord(slot.ready, s))
             })();
             // Publish cancellation before draining D2H: peers must not wait for
@@ -8717,8 +9901,13 @@ if lossless_bits.is_none(){
                 eprintln!("MGBFS_RUNTIME_FATAL rank={} error={error}", self.cfg.rank);
             }
             crate::failure::report_and_abort_on_error(
-                copied, &mut self.failed, self.failure_report.as_deref(),
-                || unsafe { mgbfs_nccl_abort(comm); }, || unsafe {
+                copied,
+                &mut self.failed,
+                self.failure_report.as_deref(),
+                || unsafe {
+                    mgbfs_nccl_abort(comm);
+                },
+                || unsafe {
                     cudaStreamSynchronize(s);
                 },
             )?;
@@ -8731,7 +9920,9 @@ if lossless_bits.is_none(){
                 if let Some(report) = failure_report {
                     report.store(2, std::sync::atomic::Ordering::Release);
                 }
-                unsafe { mgbfs_nccl_abort(comm); }
+                unsafe {
+                    mgbfs_nccl_abort(comm);
+                }
             })?;
             offset += u64::from(n);
         }
@@ -8840,9 +10031,15 @@ mod weighted_producer_tests {
     fn weighted_advance_preserves_original_depth_full_state_layers() {
         // BMMA v1 is explicitly SM75-only; run its cases only on that
         // hardware, while retaining all CUB oracle cases on other GPUs.
-        extern "C" {fn mgbfs_generic_hardware_info(device:i32,values:*mut u64)->i32;}
-        let mut hardware=[0u64;8];assert_eq!(unsafe{mgbfs_generic_hardware_info(0,hardware.as_mut_ptr())},0);
-        let bmma_supported=hardware[1]==7&&hardware[2]==5;
+        extern "C" {
+            fn mgbfs_generic_hardware_info(device: i32, values: *mut u64) -> i32;
+        }
+        let mut hardware = [0u64; 8];
+        assert_eq!(
+            unsafe { mgbfs_generic_hardware_info(0, hardware.as_mut_ptr()) },
+            0
+        );
+        let bmma_supported = hardware[1] == 7 && hardware[2] == 5;
         // Calling the real public advance path catches a missing settlement
         // driver, treating composed moves as unit cost, and future arrivals
         // incorrectly suppressing an earlier shortest-path discovery.
@@ -8863,7 +10060,9 @@ mod weighted_producer_tests {
             (2, OwnerBackend::BmmaBucket, "bmma", 20260828u128),
             (10, OwnerBackend::BmmaBucket, "bmma", 20260828u128),
         ] {
-            if backend==OwnerBackend::BmmaBucket&&!bmma_supported{continue;}
+            if backend == OwnerBackend::BmmaBucket && !bmma_supported {
+                continue;
+            }
             let seed = seed_id.to_le_bytes();
             let schedule = MacroGeneratorSet::compile_bounded(&graph, macro_depth, 128).unwrap();
             for prededup in [false, true] {

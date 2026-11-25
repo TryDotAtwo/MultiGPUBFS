@@ -308,10 +308,16 @@ pub fn shard_ab_shared_buffers(s: SharedBufferShape, lsa: bool) -> Result<Alloca
     let base = library_shared_buffers_for_transport(s, lsa)?;
     let mut result = AllocationLedger::new(u64::MAX, 0)?;
     for allocation in base.allocations {
-        if allocation.name == "library_candidates" { continue; }
+        if allocation.name == "library_candidates" {
+            continue;
+        }
         let bytes = if ["prev", "curr"].contains(&allocation.name.as_str()) {
-            s.layer_capacity.checked_mul(16).ok_or("SHARD_AB_HISTORY_OVERFLOW")?
-        } else { allocation.payload_bytes };
+            s.layer_capacity
+                .checked_mul(16)
+                .ok_or("SHARD_AB_HISTORY_OVERFLOW")?
+        } else {
+            allocation.payload_bytes
+        };
         result.add(&allocation.name, bytes, 1, 256)?;
     }
     Ok(result)

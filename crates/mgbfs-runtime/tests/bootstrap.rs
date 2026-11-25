@@ -207,12 +207,21 @@ fn boundary_agreement_preserves_phase_order_and_success() {
             record().identity,
             Duration::from_secs(3),
             || panic!("peer cannot create NCCL ID"),
-        ).unwrap();
-        for phase in [BoundaryPhase::ArchiveAdmission, BoundaryPhase::ArchiveCommitted,
-            BoundaryPhase::OutputWritten, BoundaryPhase::GroupPublished] {
-            assert!(!group.agree_boundary(phase, false, Duration::from_secs(3)).unwrap());
+        )
+        .unwrap();
+        for phase in [
+            BoundaryPhase::ArchiveAdmission,
+            BoundaryPhase::ArchiveCommitted,
+            BoundaryPhase::OutputWritten,
+            BoundaryPhase::GroupPublished,
+        ] {
+            assert!(!group
+                .agree_boundary(phase, false, Duration::from_secs(3))
+                .unwrap());
         }
-        assert!(group.agree_boundary(BoundaryPhase::SessionReuse, true, Duration::from_secs(3)).unwrap());
+        assert!(group
+            .agree_boundary(BoundaryPhase::SessionReuse, true, Duration::from_secs(3))
+            .unwrap());
     });
     let mut coordinator = rendezvous(
         &path,
@@ -221,13 +230,22 @@ fn boundary_agreement_preserves_phase_order_and_success() {
         record().identity,
         Duration::from_secs(3),
         || Ok([23; 128]),
-    ).unwrap();
-    for phase in [BoundaryPhase::ArchiveAdmission, BoundaryPhase::ArchiveCommitted,
-        BoundaryPhase::OutputWritten, BoundaryPhase::GroupPublished] {
-        assert!(!coordinator.agree_boundary(phase, false, Duration::from_secs(3)).unwrap());
+    )
+    .unwrap();
+    for phase in [
+        BoundaryPhase::ArchiveAdmission,
+        BoundaryPhase::ArchiveCommitted,
+        BoundaryPhase::OutputWritten,
+        BoundaryPhase::GroupPublished,
+    ] {
+        assert!(!coordinator
+            .agree_boundary(phase, false, Duration::from_secs(3))
+            .unwrap());
     }
     // One rank rejects parking: neither may reuse the communicator.
-    assert!(coordinator.agree_boundary(BoundaryPhase::SessionReuse, false, Duration::from_secs(3)).unwrap());
+    assert!(coordinator
+        .agree_boundary(BoundaryPhase::SessionReuse, false, Duration::from_secs(3))
+        .unwrap());
     peer.join().unwrap();
     std::fs::remove_file(path).unwrap();
     std::fs::remove_dir(root).unwrap();
@@ -382,19 +400,44 @@ fn single_rank_search_sideband_waits_for_local_outcome() {
 #[test]
 fn archive_worker_signal_cancels_peer_without_a_producer_poll() {
     use mgbfs_runtime::bootstrap::{rendezvous, BoundaryPhase};
-    use std::{sync::{Arc, atomic::{AtomicU8, Ordering}}, time::{Duration, Instant}};
-    let root = std::env::temp_dir().join(format!("mgbfs-worker-signal-{}-{}",
-        std::process::id(), std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    use std::{
+        sync::{
+            atomic::{AtomicU8, Ordering},
+            Arc,
+        },
+        time::{Duration, Instant},
+    };
+    let root = std::env::temp_dir().join(format!(
+        "mgbfs-worker-signal-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
     std::fs::create_dir(&root).unwrap();
     let path = root.join("bootstrap");
     let peer_path = path.clone();
     let peer = std::thread::spawn(move || {
-        let mut group = rendezvous(&peer_path, 1, 2, record().identity,
-            Duration::from_secs(3), || panic!("peer cannot create ID")).unwrap();
-        assert!(!group.agree_configuration([7; 32], false, Duration::from_secs(3)).unwrap());
-        assert!(!group.agree_boundary(BoundaryPhase::ArchiveAdmission, false,
-            Duration::from_secs(3)).unwrap());
+        let mut group = rendezvous(
+            &peer_path,
+            1,
+            2,
+            record().identity,
+            Duration::from_secs(3),
+            || panic!("peer cannot create ID"),
+        )
+        .unwrap();
+        assert!(!group
+            .agree_configuration([7; 32], false, Duration::from_secs(3))
+            .unwrap());
+        assert!(!group
+            .agree_boundary(
+                BoundaryPhase::ArchiveAdmission,
+                false,
+                Duration::from_secs(3)
+            )
+            .unwrap());
         let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
         let deadline = Instant::now() + Duration::from_millis(500);
         while !sideband.cancel_requested() && Instant::now() < deadline {
@@ -402,26 +445,45 @@ fn archive_worker_signal_cancels_peer_without_a_producer_poll() {
         }
         let observed = sideband.cancel_requested();
         // Always cleanly retire both sides, including a broken wiring fixture.
-        if !observed { sideband.report_failure(); }
+        if !observed {
+            sideband.report_failure();
+        }
         sideband.report_retired();
         assert!(sideband.finish(&mut group).unwrap());
         observed
     });
-    let mut group = rendezvous(&path, 0, 2, record().identity,
-        Duration::from_secs(3), || Ok([23; 128])).unwrap();
-    assert!(!group.agree_configuration([7; 32], false, Duration::from_secs(3)).unwrap());
-    assert!(!group.agree_boundary(BoundaryPhase::ArchiveAdmission, false,
-        Duration::from_secs(3)).unwrap());
+    let mut group = rendezvous(
+        &path,
+        0,
+        2,
+        record().identity,
+        Duration::from_secs(3),
+        || Ok([23; 128]),
+    )
+    .unwrap();
+    assert!(!group
+        .agree_configuration([7; 32], false, Duration::from_secs(3))
+        .unwrap());
+    assert!(!group
+        .agree_boundary(
+            BoundaryPhase::ArchiveAdmission,
+            false,
+            Duration::from_secs(3)
+        )
+        .unwrap());
     let worker_signal = Arc::new(AtomicU8::new(0));
-    let sideband = group.start_search_sideband_with_report(
-        Duration::from_secs(3), worker_signal.clone()).unwrap();
+    let sideband = group
+        .start_search_sideband_with_report(Duration::from_secs(3), worker_signal.clone())
+        .unwrap();
     // Equivalent to the disk worker publishing failure while the producer is
     // busy on GPU. No report_failure/advance/acquire call on this rank follows.
     worker_signal.store(2, Ordering::Release);
     let retirement = sideband.retirement_token();
-    assert!(sideband.finish_with_cleanup(&mut group, || {
-        retirement.local.store(true, Ordering::Release);
-    }).unwrap());
+    assert!(sideband
+        .finish_with_cleanup(&mut group, || {
+            retirement.local.store(true, Ordering::Release);
+        })
+        .unwrap());
     let observed = peer.join().unwrap();
     std::fs::remove_file(path).unwrap();
     std::fs::remove_dir(root).unwrap();

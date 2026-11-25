@@ -35,17 +35,28 @@ pub(crate) struct OwnerWaveWatchdog {
 
 impl OwnerWaveWatchdog {
     fn start(socket: TcpStream, rank: u32) -> Result<Arc<Self>> {
-        let watchdog = Arc::new(Self { origin: Instant::now(), deadline_ms: AtomicU64::new(0) });
+        let watchdog = Arc::new(Self {
+            origin: Instant::now(),
+            deadline_ms: AtomicU64::new(0),
+        });
         let observer = Arc::downgrade(&watchdog);
         #[cfg(all(feature = "cuda", target_os = "linux"))]
         let managed_worker = std::env::var_os("MGBFS_JOB_PHASE_PATH").is_some();
-        thread::Builder::new().name("segment-owner-watchdog".into()).stack_size(128 * 1024)
+        thread::Builder::new()
+            .name("segment-owner-watchdog".into())
+            .stack_size(128 * 1024)
             .spawn(move || loop {
                 thread::sleep(Duration::from_millis(100));
-                let Some(watchdog) = observer.upgrade() else { break };
+                let Some(watchdog) = observer.upgrade() else {
+                    break;
+                };
                 let deadline = watchdog.deadline_ms.load(Ordering::Acquire);
-                if deadline == 0 || watchdog.elapsed_ms() < deadline
-                    || watchdog.deadline_ms.compare_exchange(deadline, 0, Ordering::AcqRel, Ordering::Acquire).is_err()
+                if deadline == 0
+                    || watchdog.elapsed_ms() < deadline
+                    || watchdog
+                        .deadline_ms
+                        .compare_exchange(deadline, 0, Ordering::AcqRel, Ordering::Acquire)
+                        .is_err()
                 {
                     continue;
                 }
@@ -59,7 +70,8 @@ impl OwnerWaveWatchdog {
                 }
                 eprintln!("SEGMENT_PACKET_OWNER_STALL rank={rank}");
                 break;
-            }).map_err(|e| e.to_string())?;
+            })
+            .map_err(|e| e.to_string())?;
         Ok(watchdog)
     }
 
@@ -125,7 +137,11 @@ impl PacketEndpoint {
         if advertised.port() == 0 || bind.port() == 0 {
             return Err("SEGMENT_PACKET_CONTROL_PORT".into());
         }
-        Ok(Some(Self { advertised, bind, job_token }))
+        Ok(Some(Self {
+            advertised,
+            bind,
+            job_token,
+        }))
     }
 
     pub(crate) fn connect(
@@ -158,8 +174,12 @@ pub(crate) fn parse_job_token(value: Option<&str>) -> Result<PacketJobToken> {
         return Err("SEGMENT_PACKET_JOB_TOKEN_INVALID".into());
     }
     for (pair, byte) in value.chunks_exact(2).zip(&mut token) {
-        let high = (pair[0] as char).to_digit(16).ok_or("SEGMENT_PACKET_JOB_TOKEN_INVALID")?;
-        let low = (pair[1] as char).to_digit(16).ok_or("SEGMENT_PACKET_JOB_TOKEN_INVALID")?;
+        let high = (pair[0] as char)
+            .to_digit(16)
+            .ok_or("SEGMENT_PACKET_JOB_TOKEN_INVALID")?;
+        let low = (pair[1] as char)
+            .to_digit(16)
+            .ok_or("SEGMENT_PACKET_JOB_TOKEN_INVALID")?;
         *byte = (high * 16 + low) as u8;
     }
     Ok(token)
@@ -202,7 +222,9 @@ fn read_ready(socket: &mut TcpStream, deadline: Instant) -> Result<bool> {
         if remaining.is_zero() {
             return Err("SEGMENT_PACKET_STARTUP_TIMEOUT".into());
         }
-        socket.set_read_timeout(Some(remaining)).map_err(|e| e.to_string())?;
+        socket
+            .set_read_timeout(Some(remaining))
+            .map_err(|e| e.to_string())?;
         match socket.read(&mut bytes[filled..]) {
             Ok(0) if filled == 0 => return Ok(false),
             Ok(0) => return Err("SEGMENT_PACKET_READ truncated startup frame".into()),
@@ -219,7 +241,10 @@ fn read_ready(socket: &mut TcpStream, deadline: Instant) -> Result<bool> {
 }
 
 fn connect_until_ready(
-    advertised: SocketAddr, rank: u32, tag: &[u8; 32], deadline: Instant,
+    advertised: SocketAddr,
+    rank: u32,
+    tag: &[u8; 32],
+    deadline: Instant,
 ) -> Result<TcpStream> {
     let mut last_error = "SEGMENT_PACKET_STARTUP_TIMEOUT".to_owned();
     loop {
@@ -227,7 +252,10 @@ fn connect_until_ready(
         if remaining.is_zero() {
             return Err(last_error);
         }
-        last_error = match TcpStream::connect_timeout(&advertised, remaining.min(Duration::from_millis(250))) {
+        last_error = match TcpStream::connect_timeout(
+            &advertised,
+            remaining.min(Duration::from_millis(250)),
+        ) {
             Err(error) => format!("SEGMENT_PACKET_CONNECT {error}"),
             Ok(mut socket) => {
                 let remaining = deadline.saturating_duration_since(Instant::now());
@@ -235,17 +263,25 @@ fn connect_until_ready(
                     return Err(last_error);
                 }
                 socket.set_nodelay(true).map_err(|e| e.to_string())?;
-                socket.set_write_timeout(Some(remaining)).map_err(|e| e.to_string())?;
+                socket
+                    .set_write_timeout(Some(remaining))
+                    .map_err(|e| e.to_string())?;
                 match write_hello(&mut socket, rank, tag) {
                     Ok(()) if read_ready(&mut socket, deadline)? => return Ok(socket),
                     // A relay can accept TCP before the destination is listening.
                     Ok(()) => "SEGMENT_PACKET_READ closed before READY".into(),
-                    Err(error) if startup_disconnected(&error) => format!("SEGMENT_PACKET_HANDSHAKE {error}"),
+                    Err(error) if startup_disconnected(&error) => {
+                        format!("SEGMENT_PACKET_HANDSHAKE {error}")
+                    }
                     Err(error) => return Err(format!("SEGMENT_PACKET_HANDSHAKE {error}")),
                 }
             }
         };
-        thread::sleep(deadline.saturating_duration_since(Instant::now()).min(Duration::from_millis(20)));
+        thread::sleep(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(20)),
+        );
     }
 }
 
@@ -277,11 +313,26 @@ impl Frame {
     fn encode(self) -> [u8; FRAME_BYTES] {
         let mut bytes = [0; FRAME_BYTES];
         let packet = match self {
-            Self::Ready => { bytes[0] = 1; return bytes; }
-            Self::Offer(p) => { bytes[0] = 2; p }
-            Self::Grant(p) => { bytes[0] = 3; p }
-            Self::Ack(p) => { bytes[0] = 4; p }
-            Self::Received(p) => { bytes[0] = 5; p }
+            Self::Ready => {
+                bytes[0] = 1;
+                return bytes;
+            }
+            Self::Offer(p) => {
+                bytes[0] = 2;
+                p
+            }
+            Self::Grant(p) => {
+                bytes[0] = 3;
+                p
+            }
+            Self::Ack(p) => {
+                bytes[0] = 4;
+                p
+            }
+            Self::Received(p) => {
+                bytes[0] = 5;
+                p
+            }
             Self::Seal(depth) | Self::Commit(depth) => {
                 bytes[0] = if matches!(self, Self::Seal(_)) { 6 } else { 7 };
                 bytes[8..16].copy_from_slice(&depth.to_le_bytes());
@@ -292,7 +343,10 @@ impl Frame {
                 bytes[36..40].copy_from_slice(&code.to_le_bytes());
                 return bytes;
             }
-            Self::Close => { bytes[0] = 10; return bytes; }
+            Self::Close => {
+                bytes[0] = 10;
+                return bytes;
+            }
         };
         bytes[8..16].copy_from_slice(&packet.depth.to_le_bytes());
         bytes[16..24].copy_from_slice(&packet.sequence.to_le_bytes());
@@ -307,7 +361,14 @@ impl Frame {
         let depth = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
         let sequence = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
         let word = |offset| u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
-        let packet = Packet { depth, sequence, source: word(24), destination: word(28), descriptors: word(32), rows: word(36) };
+        let packet = Packet {
+            depth,
+            sequence,
+            source: word(24),
+            destination: word(28),
+            descriptors: word(32),
+            rows: word(36),
+        };
         let frame = match bytes[0] {
             1 => Self::Ready,
             2 => Self::Offer(packet),
@@ -329,12 +390,16 @@ impl Frame {
 
     fn read(socket: &mut TcpStream) -> Result<Self> {
         let mut bytes = [0; FRAME_BYTES];
-        socket.read_exact(&mut bytes).map_err(|e| format!("SEGMENT_PACKET_READ {e}"))?;
+        socket
+            .read_exact(&mut bytes)
+            .map_err(|e| format!("SEGMENT_PACKET_READ {e}"))?;
         Self::decode(bytes)
     }
 
     fn write(self, socket: &mut TcpStream) -> Result<()> {
-        socket.write_all(&self.encode()).map_err(|e| format!("SEGMENT_PACKET_WRITE {e}"))
+        socket
+            .write_all(&self.encode())
+            .map_err(|e| format!("SEGMENT_PACKET_WRITE {e}"))
     }
 }
 
@@ -342,7 +407,12 @@ pub(crate) const SHARD_DESCRIPTOR_BYTES: usize = 8;
 
 #[cfg(all(feature = "cuda", target_os = "linux"))]
 pub(crate) type PacketWireFn = unsafe extern "C" fn(
-    *mut std::ffi::c_void, *mut std::ffi::c_void, u64, u32, u32, *mut std::ffi::c_void,
+    *mut std::ffi::c_void,
+    *mut std::ffi::c_void,
+    u64,
+    u32,
+    u32,
+    *mut std::ffi::c_void,
 ) -> i32;
 
 #[cfg(all(feature = "cuda", target_os = "linux"))]
@@ -384,7 +454,11 @@ impl PacketBytes {
             .checked_mul(state_bytes)
             .and_then(|bytes| states.checked_add(bytes))
             .ok_or("SEGMENT_PACKET_BUFFER_SIZE")?;
-        Ok(Self { header, states, total })
+        Ok(Self {
+            header,
+            states,
+            total,
+        })
     }
 }
 
@@ -403,7 +477,10 @@ pub(crate) fn encode_runs(runs: &[ShardRun], buffer: &mut Vec<u8>) {
 }
 
 pub(crate) fn decode_runs(
-    bytes: &[u8], expected_rows: u32, shards: u32, runs: &mut Vec<ShardRun>,
+    bytes: &[u8],
+    expected_rows: u32,
+    shards: u32,
+    runs: &mut Vec<ShardRun>,
 ) -> Result<()> {
     if bytes.is_empty() || bytes.len() % SHARD_DESCRIPTOR_BYTES != 0 {
         return Err("SEGMENT_PACKET_SHARD_HEADER_SIZE".into());
@@ -413,7 +490,9 @@ pub(crate) fn decode_runs(
     for bytes in bytes.chunks_exact(SHARD_DESCRIPTOR_BYTES) {
         let shard = u32::from_le_bytes(bytes[..4].try_into().unwrap());
         let rows = u32::from_le_bytes(bytes[4..].try_into().unwrap());
-        if rows == 0 || rows > rows_left || shard >= shards
+        if rows == 0
+            || rows > rows_left
+            || shard >= shards
             || runs.last().is_some_and(|previous| previous.shard >= shard)
         {
             return Err("SEGMENT_PACKET_SHARD_HEADER".into());
@@ -473,12 +552,25 @@ impl Scheduler {
     fn with_receive_slots(world: u32, shards: u32, max_rows: u32, receive_slots: u32) -> Self {
         let ranks = world as usize;
         Self {
-            depth: 0, shards, max_rows, credit_timeout: DEADLINE, cursor: 0, next_sequence: vec![0; ranks],
-            active_destinations: 0, pending_sources: 0, closed_count: 0, peak_active: Arc::new(AtomicU32::new(0)),
-            sealed: vec![false; ranks], sealed_count: 0, closed: vec![false; ranks], pending: vec![None; ranks],
-            receive_slots: receive_slots as usize, active_count: 0,
+            depth: 0,
+            shards,
+            max_rows,
+            credit_timeout: DEADLINE,
+            cursor: 0,
+            next_sequence: vec![0; ranks],
+            active_destinations: 0,
+            pending_sources: 0,
+            closed_count: 0,
+            peak_active: Arc::new(AtomicU32::new(0)),
+            sealed: vec![false; ranks],
+            sealed_count: 0,
+            closed: vec![false; ranks],
+            pending: vec![None; ranks],
+            receive_slots: receive_slots as usize,
+            active_count: 0,
             active: vec![[None; CAROUSEL_RECEIVE_SLOTS]; ranks],
-            last_sent: vec![None; ranks], endpoint: vec![None; ranks],
+            last_sent: vec![None; ranks],
+            endpoint: vec![None; ranks],
         }
     }
 
@@ -488,8 +580,12 @@ impl Scheduler {
         while destinations != 0 {
             let destination = destinations.trailing_zeros() as usize;
             destinations &= destinations - 1;
-            for credit in self.active[destination][..self.receive_slots].iter().flatten() {
-                earliest = Some(earliest.map_or(credit.expires_at, |time| time.min(credit.expires_at)));
+            for credit in self.active[destination][..self.receive_slots]
+                .iter()
+                .flatten()
+            {
+                earliest =
+                    Some(earliest.map_or(credit.expires_at, |time| time.min(credit.expires_at)));
             }
         }
         earliest.map(|expires| expires.saturating_duration_since(now))
@@ -505,7 +601,9 @@ impl Scheduler {
     fn complete(&mut self, rank: usize, packet: Packet, received: bool) -> Result<bool> {
         let source = packet.source as usize;
         let destination = packet.destination as usize;
-        if source >= self.active.len() || destination >= self.active.len() || source == destination
+        if source >= self.active.len()
+            || destination >= self.active.len()
+            || source == destination
             || (rank != source && rank != destination)
             || (received && (rank != destination || self.receive_slots == 1))
         {
@@ -513,10 +611,13 @@ impl Scheduler {
         }
 
         let active = &mut self.active[destination][..self.receive_slots];
-        let Some(slot) = active.iter().position(|credit| credit.is_some_and(|credit| {
-            let live = credit.packet;
-            (live.source, live.depth, live.sequence) == (packet.source, packet.depth, packet.sequence)
-        })) else {
+        let Some(slot) = active.iter().position(|credit| {
+            credit.is_some_and(|credit| {
+                let live = credit.packet;
+                (live.source, live.depth, live.sequence)
+                    == (packet.source, packet.depth, packet.sequence)
+            })
+        }) else {
             if self.last_sent[source].is_some_and(|last| {
                 packet == last || (packet.depth, packet.sequence) < (last.depth, last.sequence)
             }) {
@@ -581,7 +682,12 @@ impl Scheduler {
         Ok(output)
     }
 
-    fn input_into(&mut self, rank: u32, frame: Frame, output: &mut Vec<(u32, Frame)>) -> Result<()> {
+    fn input_into(
+        &mut self,
+        rank: u32,
+        frame: Frame,
+        output: &mut Vec<(u32, Frame)>,
+    ) -> Result<()> {
         let rank = rank as usize;
         let world = self.pending.len();
         output.clear();
@@ -591,16 +697,26 @@ impl Scheduler {
         match frame {
             Frame::Offer(packet) => {
                 let destination = packet.destination as usize;
-                if packet.depth != self.depth || packet.source as usize != rank
-                    || destination >= world || destination == rank || self.closed[destination]
-                    || packet.descriptors == 0 || packet.descriptors > self.shards
-                    || packet.descriptors > packet.rows || packet.rows > self.max_rows
-                    || packet.sequence != self.next_sequence[rank] || self.sealed[rank]
-                    || self.pending[rank].is_some() || self.sending(rank)
+                if packet.depth != self.depth
+                    || packet.source as usize != rank
+                    || destination >= world
+                    || destination == rank
+                    || self.closed[destination]
+                    || packet.descriptors == 0
+                    || packet.descriptors > self.shards
+                    || packet.descriptors > packet.rows
+                    || packet.rows > self.max_rows
+                    || packet.sequence != self.next_sequence[rank]
+                    || self.sealed[rank]
+                    || self.pending[rank].is_some()
+                    || self.sending(rank)
                 {
                     return Err("SEGMENT_PACKET_INVALID_OFFER".into());
                 }
-                self.next_sequence[rank] = packet.sequence.checked_add(1).ok_or("SEGMENT_PACKET_SEQUENCE_OVERFLOW")?;
+                self.next_sequence[rank] = packet
+                    .sequence
+                    .checked_add(1)
+                    .ok_or("SEGMENT_PACKET_SEQUENCE_OVERFLOW")?;
                 self.pending[rank] = Some(packet);
                 self.pending_sources |= 1u128 << rank;
             }
@@ -610,19 +726,28 @@ impl Scheduler {
                 }
             }
             Frame::Seal(depth) => {
-                if depth != self.depth || self.sealed[rank] || self.pending[rank].is_some()
-                    || self.sending(rank) {
+                if depth != self.depth
+                    || self.sealed[rank]
+                    || self.pending[rank].is_some()
+                    || self.sending(rank)
+                {
                     return Err("SEGMENT_PACKET_INVALID_SEAL".into());
                 }
                 self.sealed[rank] = true;
                 self.sealed_count += 1;
             }
             Frame::Close => {
-                if self.endpoint[rank].is_some() || self.pending[rank].is_some()
+                if self.endpoint[rank].is_some()
+                    || self.pending[rank].is_some()
                     || self.active.iter().flatten().flatten().any(|credit| {
-                        credit.packet.source as usize == rank || credit.packet.destination as usize == rank
+                        credit.packet.source as usize == rank
+                            || credit.packet.destination as usize == rank
                     })
-                    || self.pending.iter().flatten().any(|p| p.destination as usize == rank)
+                    || self
+                        .pending
+                        .iter()
+                        .flatten()
+                        .any(|p| p.destination as usize == rank)
                 {
                     return Err("SEGMENT_PACKET_CLOSE_WITH_LIVE_CREDIT".into());
                 }
@@ -643,7 +768,10 @@ impl Scheduler {
             if self.endpoint[source].is_some() || self.endpoint[destination].is_some() {
                 continue;
             }
-            let Some(slot) = self.active[destination][..self.receive_slots].iter().position(Option::is_none) else {
+            let Some(slot) = self.active[destination][..self.receive_slots]
+                .iter()
+                .position(Option::is_none)
+            else {
                 continue;
             };
             self.pending[source] = None;
@@ -652,22 +780,30 @@ impl Scheduler {
             self.endpoint[source] = Some(endpoint);
             self.endpoint[destination] = Some(endpoint);
             self.active[destination][slot] = Some(Active {
-                packet, expires_at: Instant::now() + self.credit_timeout,
-                source_ack: false, received: false, destination_ack: false,
+                packet,
+                expires_at: Instant::now() + self.credit_timeout,
+                source_ack: false,
+                received: false,
+                destination_ack: false,
             });
             self.active_destinations |= 1u128 << destination;
             self.active_count += 1;
-            self.peak_active.fetch_max(self.active_count, Ordering::Relaxed);
+            self.peak_active
+                .fetch_max(self.active_count, Ordering::Relaxed);
             self.cursor = (source + 1) % world;
             output.push((packet.source, Frame::Grant(packet)));
             output.push((packet.destination, Frame::Grant(packet)));
         }
-        if self.sealed_count == world && self.pending_sources == 0 && self.active_destinations == 0 {
+        if self.sealed_count == world && self.pending_sources == 0 && self.active_destinations == 0
+        {
             if self.closed_count != 0 {
                 return Err("SEGMENT_PACKET_COMMIT_WITH_CLOSED_RANK".into());
             }
             output.extend((0..world as u32).map(|rank| (rank, Frame::Commit(self.depth))));
-            self.depth = self.depth.checked_add(1).ok_or("SEGMENT_PACKET_DEPTH_OVERFLOW")?;
+            self.depth = self
+                .depth
+                .checked_add(1)
+                .ok_or("SEGMENT_PACKET_DEPTH_OVERFLOW")?;
             self.sealed.fill(false);
             self.sealed_count = 0;
             self.next_sequence.fill(0);
@@ -687,19 +823,37 @@ pub(crate) struct PacketClient {
 impl PacketClient {
     #[cfg(test)]
     pub fn connect(
-        advertised: SocketAddr, bind: SocketAddr, rank: u32, world: u32,
-        shards: u32, max_rows: u32, identity: &[u8; 128], job_token: &PacketJobToken,
+        advertised: SocketAddr,
+        bind: SocketAddr,
+        rank: u32,
+        world: u32,
+        shards: u32,
+        max_rows: u32,
+        identity: &[u8; 128],
+        job_token: &PacketJobToken,
     ) -> Result<Self> {
-        Self::connect_with_receive_slots(advertised, bind, rank, world, shards, max_rows, identity, job_token, 1)
+        Self::connect_with_receive_slots(
+            advertised, bind, rank, world, shards, max_rows, identity, job_token, 1,
+        )
     }
 
     pub fn connect_with_receive_slots(
-        advertised: SocketAddr, bind: SocketAddr, rank: u32, world: u32,
-        shards: u32, max_rows: u32, identity: &[u8; 128], job_token: &PacketJobToken,
+        advertised: SocketAddr,
+        bind: SocketAddr,
+        rank: u32,
+        world: u32,
+        shards: u32,
+        max_rows: u32,
+        identity: &[u8; 128],
+        job_token: &PacketJobToken,
         receive_slots: u32,
     ) -> Result<Self> {
-        if !(2..=u128::BITS).contains(&world) || rank >= world || shards == 0 || max_rows == 0
-            || advertised.port() == 0 || bind.port() == 0
+        if !(2..=u128::BITS).contains(&world)
+            || rank >= world
+            || shards == 0
+            || max_rows == 0
+            || advertised.port() == 0
+            || bind.port() == 0
             || (receive_slots != 1 && receive_slots as usize != CAROUSEL_RECEIVE_SLOTS)
         {
             return Err("SEGMENT_PACKET_CONTROL_CONFIGURATION".into());
@@ -710,7 +864,9 @@ impl PacketClient {
             let listener = loop {
                 match TcpListener::bind(bind) {
                     Ok(listener) => break listener,
-                    Err(error) if error.kind() == ErrorKind::AddrInUse && Instant::now() < deadline => {
+                    Err(error)
+                        if error.kind() == ErrorKind::AddrInUse && Instant::now() < deadline =>
+                    {
                         thread::sleep(Duration::from_millis(20));
                     }
                     Err(error) => return Err(format!("SEGMENT_PACKET_BIND {error}")),
@@ -719,20 +875,28 @@ impl PacketClient {
             listener.set_nonblocking(true).map_err(|e| e.to_string())?;
             let scheduler = Scheduler::with_receive_slots(world, shards, max_rows, receive_slots);
             let peak = Arc::clone(&scheduler.peak_active);
-            thread::Builder::new().name("segment-packet-hub".into()).spawn(move || {
-                if let Err(error) = run_hub(listener, scheduler, tag, deadline) {
-                    eprintln!("{error}");
-                }
-            }).map_err(|e| e.to_string())?;
+            thread::Builder::new()
+                .name("segment-packet-hub".into())
+                .spawn(move || {
+                    if let Err(error) = run_hub(listener, scheduler, tag, deadline) {
+                        eprintln!("{error}");
+                    }
+                })
+                .map_err(|e| e.to_string())?;
             Some(peak)
         } else {
             None
         };
         let socket = connect_until_ready(advertised, rank, &tag, deadline)?;
-        socket.set_write_timeout(Some(DEADLINE)).map_err(|e| e.to_string())?;
+        socket
+            .set_write_timeout(Some(DEADLINE))
+            .map_err(|e| e.to_string())?;
         socket.set_read_timeout(None).map_err(|e| e.to_string())?;
         let owner_watchdog = if receive_slots as usize == CAROUSEL_RECEIVE_SLOTS {
-            Some(OwnerWaveWatchdog::start(socket.try_clone().map_err(|e| e.to_string())?, rank)?)
+            Some(OwnerWaveWatchdog::start(
+                socket.try_clone().map_err(|e| e.to_string())?,
+                rank,
+            )?)
         } else {
             None
         };
@@ -740,21 +904,34 @@ impl PacketClient {
         let terminal = Arc::new(AtomicU32::new(0));
         let reader_terminal = Arc::clone(&terminal);
         let (sender, events) = mpsc::sync_channel(4);
-        thread::Builder::new().name("segment-packet-events".into()).spawn(move || loop {
-            match Frame::read(&mut incoming) {
-                Ok(Frame::Abort(code)) => {
-                    reader_terminal.store(code, Ordering::Release);
-                    let _ = sender.try_send(Frame::Abort(code));
-                    break;
+        thread::Builder::new()
+            .name("segment-packet-events".into())
+            .spawn(move || loop {
+                match Frame::read(&mut incoming) {
+                    Ok(Frame::Abort(code)) => {
+                        reader_terminal.store(code, Ordering::Release);
+                        let _ = sender.try_send(Frame::Abort(code));
+                        break;
+                    }
+                    Ok(frame) => {
+                        if sender.send(frame).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        reader_terminal.store(REMOTE_FAILURE, Ordering::Release);
+                        break;
+                    }
                 }
-                Ok(frame) => if sender.send(frame).is_err() { break; },
-                Err(_) => {
-                    reader_terminal.store(REMOTE_FAILURE, Ordering::Release);
-                    break;
-                }
-            }
-        }).map_err(|e| e.to_string())?;
-        Ok(Self { socket, events, terminal, hub_peak_active, owner_watchdog })
+            })
+            .map_err(|e| e.to_string())?;
+        Ok(Self {
+            socket,
+            events,
+            terminal,
+            hub_peak_active,
+            owner_watchdog,
+        })
     }
 
     #[cfg(any(test, all(feature = "cuda", target_os = "linux")))]
@@ -775,21 +952,21 @@ impl PacketClient {
             match self.events.recv_timeout(wait) {
                 Ok(frame) => Some(frame),
                 Err(mpsc::RecvTimeoutError::Timeout) => None,
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    Some(Frame::Abort(REMOTE_FAILURE))
-                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => Some(Frame::Abort(REMOTE_FAILURE)),
             }
         } else {
             match self.events.try_recv() {
                 Ok(frame) => Some(frame),
                 Err(mpsc::TryRecvError::Empty) => None,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    Some(Frame::Abort(REMOTE_FAILURE))
-                }
+                Err(mpsc::TryRecvError::Disconnected) => Some(Frame::Abort(REMOTE_FAILURE)),
             }
         };
         let terminal = self.terminal_code();
-        if terminal != 0 { Some(Frame::Abort(terminal)) } else { frame }
+        if terminal != 0 {
+            Some(Frame::Abort(terminal))
+        } else {
+            frame
+        }
     }
 
     pub fn next_after_seal(&self) -> Frame {
@@ -812,7 +989,9 @@ impl PacketClient {
     }
 
     pub fn hub_peak_active_credits(&self) -> Option<u32> {
-        self.hub_peak_active.as_ref().map(|peak| peak.load(Ordering::Relaxed))
+        self.hub_peak_active
+            .as_ref()
+            .map(|peak| peak.load(Ordering::Relaxed))
     }
 
     pub fn terminal_ptr(&self) -> *const AtomicU32 {
@@ -828,7 +1007,10 @@ impl Drop for PacketClient {
 }
 
 fn run_hub(
-    listener: TcpListener, scheduler: Scheduler, tag: [u8; 32], deadline: Instant,
+    listener: TcpListener,
+    scheduler: Scheduler,
+    tag: [u8; 32],
+    deadline: Instant,
 ) -> Result<()> {
     struct PendingHello {
         socket: TcpStream,
@@ -846,11 +1028,15 @@ fn run_hub(
             return Err("SEGMENT_PACKET_HELLO_TIMEOUT".into());
         }
         for _ in 0..pending.len() {
-            let Some(mut hello) = pending.pop_front() else { break };
+            let Some(mut hello) = pending.pop_front() else {
+                break;
+            };
             match hello.socket.read(&mut hello.bytes[hello.filled..]) {
                 Ok(0) => continue,
                 Ok(bytes) => hello.filled += bytes,
-                Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted) => {
+                Err(error)
+                    if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted) =>
+                {
                     pending.push_back(hello);
                     continue;
                 }
@@ -878,10 +1064,15 @@ fn run_hub(
             } else {
                 count += 1;
             }
-            hello.socket.set_write_timeout(Some(DEADLINE)).map_err(|e| e.to_string())?;
+            hello
+                .socket
+                .set_write_timeout(Some(DEADLINE))
+                .map_err(|e| e.to_string())?;
             hello.socket.set_nodelay(true).map_err(|e| e.to_string())?;
             *previous = Some(hello.socket);
-            if count == world { break; }
+            if count == world {
+                break;
+            }
         }
         if count == world {
             for peer in &mut peers {
@@ -890,7 +1081,9 @@ fn run_hub(
                     count -= 1;
                 }
             }
-            if count == world { break; }
+            if count == world {
+                break;
+            }
         }
 
         let mut accepted = false;
@@ -903,7 +1096,11 @@ fn run_hub(
                         // Unfinished HELLOs must not exhaust the startup slots.
                         pending.pop_front();
                     }
-                    pending.push_back(PendingHello { socket, bytes: [0; HELLO_BYTES], filled: 0 });
+                    pending.push_back(PendingHello {
+                        socket,
+                        bytes: [0; HELLO_BYTES],
+                        filled: 0,
+                    });
                     accepted = true;
                 }
                 Err(error) if error.kind() == ErrorKind::WouldBlock => break,
@@ -912,7 +1109,11 @@ fn run_hub(
             }
         }
         if !accepted {
-            thread::sleep(deadline.saturating_duration_since(Instant::now()).min(Duration::from_millis(5)));
+            thread::sleep(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(5)),
+            );
         }
     }
     if Instant::now() >= deadline {
@@ -957,18 +1158,21 @@ fn write_hub_frame(peer: &mut TcpStream, frame: Frame) -> Result<()> {
         if remaining.is_zero() {
             return Err("SEGMENT_PACKET_WRITE_TIMEOUT".into());
         }
-        peer.set_write_timeout(Some(remaining)).map_err(|e| e.to_string())?;
+        peer.set_write_timeout(Some(remaining))
+            .map_err(|e| e.to_string())?;
         adjusted = true;
     }
     if adjusted {
-        peer.set_write_timeout(Some(DEADLINE)).map_err(|e| e.to_string())?;
+        peer.set_write_timeout(Some(DEADLINE))
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
 fn write_peer_output(
     mut write: impl FnMut(Frame) -> Result<()>,
-    output: mpsc::Receiver<Frame>, terminal: &AtomicU32,
+    output: mpsc::Receiver<Frame>,
+    terminal: &AtomicU32,
 ) -> Result<()> {
     for frame in output {
         if terminal.load(Ordering::Acquire) != 0 {
@@ -997,20 +1201,33 @@ fn hub_loop(peers: &[TcpStream], scheduler: Scheduler) -> Result<()> {
             let stop = Arc::clone(&terminal);
             // Each peer owns its socket writes and keeps its own FIFO.
             // Backpressure here cannot pause the coordinator or other peers.
-            thread::Builder::new().stack_size(128 * 1024).spawn(move || {
-                let result = write_peer_output(|frame| write_hub_frame(&mut writer, frame), commands, &stop);
-                if let Err(error) = result {
-                    let _ = tx.send(HubInput::WriteError(rank, error));
-                }
-                let _ = writer.shutdown(Shutdown::Both);
-            }).map_err(|e| e.to_string())?;
+            thread::Builder::new()
+                .stack_size(128 * 1024)
+                .spawn(move || {
+                    let result = write_peer_output(
+                        |frame| write_hub_frame(&mut writer, frame),
+                        commands,
+                        &stop,
+                    );
+                    if let Err(error) = result {
+                        let _ = tx.send(HubInput::WriteError(rank, error));
+                    }
+                    let _ = writer.shutdown(Shutdown::Both);
+                })
+                .map_err(|e| e.to_string())?;
             outputs.push(output);
             let tx = sender.clone();
-            thread::Builder::new().stack_size(128 * 1024).spawn(move || loop {
-                let frame = Frame::read(&mut reader);
-                let finished = frame.is_err() || matches!(frame, Ok(Frame::Close) | Ok(Frame::Fail(_)));
-                if tx.send(HubInput::Frame(rank as u32, frame)).is_err() || finished { break; }
-            }).map_err(|e| e.to_string())?;
+            thread::Builder::new()
+                .stack_size(128 * 1024)
+                .spawn(move || loop {
+                    let frame = Frame::read(&mut reader);
+                    let finished =
+                        frame.is_err() || matches!(frame, Ok(Frame::Close) | Ok(Frame::Fail(_)));
+                    if tx.send(HubInput::Frame(rank as u32, frame)).is_err() || finished {
+                        break;
+                    }
+                })
+                .map_err(|e| e.to_string())?;
             enqueue_output(&outputs, rank, Frame::Ready)?;
         }
         drop(sender);
@@ -1032,14 +1249,20 @@ fn hub_loop(peers: &[TcpStream], scheduler: Scheduler) -> Result<()> {
 }
 
 fn enqueue_output(outputs: &[mpsc::SyncSender<Frame>], rank: usize, command: Frame) -> Result<()> {
-    outputs[rank].try_send(command).map_err(|error| match error {
-        mpsc::TrySendError::Full(_) => format!("SEGMENT_PACKET_WRITE_QUEUE_FULL rank={rank}"),
-        mpsc::TrySendError::Disconnected(_) => format!("SEGMENT_PACKET_WRITER_DISCONNECTED rank={rank}"),
-    })
+    outputs[rank]
+        .try_send(command)
+        .map_err(|error| match error {
+            mpsc::TrySendError::Full(_) => format!("SEGMENT_PACKET_WRITE_QUEUE_FULL rank={rank}"),
+            mpsc::TrySendError::Disconnected(_) => {
+                format!("SEGMENT_PACKET_WRITER_DISCONNECTED rank={rank}")
+            }
+        })
 }
 
 fn schedule_hub(
-    outputs: &[mpsc::SyncSender<Frame>], inbox: mpsc::Receiver<HubInput>, mut scheduler: Scheduler,
+    outputs: &[mpsc::SyncSender<Frame>],
+    inbox: mpsc::Receiver<HubInput>,
+    mut scheduler: Scheduler,
 ) -> Result<Option<u32>> {
     let mut commands = Vec::with_capacity(outputs.len());
     while scheduler.closed_count < outputs.len() {
@@ -1049,13 +1272,19 @@ fn schedule_hub(
             }
             Some(remaining) => inbox.recv_timeout(remaining).map_err(|e| match e {
                 mpsc::RecvTimeoutError::Timeout => "SEGMENT_PACKET_CREDIT_TIMEOUT".to_owned(),
-                mpsc::RecvTimeoutError::Disconnected => "SEGMENT_PACKET_HUB_DISCONNECTED".to_owned(),
+                mpsc::RecvTimeoutError::Disconnected => {
+                    "SEGMENT_PACKET_HUB_DISCONNECTED".to_owned()
+                }
             })?,
-            None => inbox.recv().map_err(|e| format!("SEGMENT_PACKET_HUB_WAIT {e}"))?,
+            None => inbox
+                .recv()
+                .map_err(|e| format!("SEGMENT_PACKET_HUB_WAIT {e}"))?,
         };
         let (rank, frame) = match event {
             HubInput::Frame(rank, frame) => (rank, frame?),
-            HubInput::WriteError(rank, error) => return Err(format!("SEGMENT_PACKET_PEER_WRITE rank={rank} {error}")),
+            HubInput::WriteError(rank, error) => {
+                return Err(format!("SEGMENT_PACKET_PEER_WRITE rank={rank} {error}"))
+            }
         };
         if let Frame::Fail(code) = frame {
             return Ok(Some(code));
@@ -1073,7 +1302,14 @@ mod tests {
     use super::*;
 
     fn packet(source: u32, destination: u32, sequence: u64) -> Packet {
-        Packet { depth: 0, sequence, source, destination, descriptors: 1, rows: 7 }
+        Packet {
+            depth: 0,
+            sequence,
+            source,
+            destination,
+            descriptors: 1,
+            rows: 7,
+        }
     }
 
     #[test]
@@ -1082,17 +1318,30 @@ mod tests {
         let first = packet(0, 1, 0);
         let second = packet(2, 3, 0);
         let reply = hub.input(0, Frame::Offer(first)).unwrap();
-        assert_eq!(reply, vec![(0, Frame::Grant(first)), (1, Frame::Grant(first))]);
+        assert_eq!(
+            reply,
+            vec![(0, Frame::Grant(first)), (1, Frame::Grant(first))]
+        );
         let reply = hub.input(2, Frame::Offer(second)).unwrap();
-        assert_eq!(reply, vec![(2, Frame::Grant(second)), (3, Frame::Grant(second))]);
-        for rank in [1, 3] { assert!(hub.input(rank, Frame::Seal(0)).unwrap().is_empty()); }
+        assert_eq!(
+            reply,
+            vec![(2, Frame::Grant(second)), (3, Frame::Grant(second))]
+        );
+        for rank in [1, 3] {
+            assert!(hub.input(rank, Frame::Seal(0)).unwrap().is_empty());
+        }
         assert!(hub.input(0, Frame::Ack(first)).unwrap().is_empty());
         assert!(hub.input(1, Frame::Ack(first)).unwrap().is_empty());
         assert!(hub.input(0, Frame::Seal(0)).unwrap().is_empty());
         assert!(hub.input(2, Frame::Ack(second)).unwrap().is_empty());
         assert!(hub.input(3, Frame::Ack(second)).unwrap().is_empty());
         let commit = hub.input(2, Frame::Seal(0)).unwrap();
-        assert_eq!(commit, (0..4).map(|rank| (rank, Frame::Commit(0))).collect::<Vec<_>>());
+        assert_eq!(
+            commit,
+            (0..4)
+                .map(|rank| (rank, Frame::Commit(0)))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -1103,7 +1352,12 @@ mod tests {
         let third = packet(3, 1, 0);
         let fourth = packet(0, 1, 1);
         let outgoing = packet(1, 2, 0);
-        let grant = |p: Packet| vec![(p.source, Frame::Grant(p)), (p.destination, Frame::Grant(p))];
+        let grant = |p: Packet| {
+            vec![
+                (p.source, Frame::Grant(p)),
+                (p.destination, Frame::Grant(p)),
+            ]
+        };
 
         for p in [first, second, third] {
             assert_eq!(hub.input(p.source, Frame::Offer(p)).unwrap(), grant(p));
@@ -1113,7 +1367,10 @@ mod tests {
         }
         assert_eq!(hub.active_count, 3);
         assert!(hub.input(0, Frame::Offer(fourth)).unwrap().is_empty());
-        assert_eq!(hub.input(1, Frame::Offer(outgoing)).unwrap(), grant(outgoing));
+        assert_eq!(
+            hub.input(1, Frame::Offer(outgoing)).unwrap(),
+            grant(outgoing)
+        );
         assert!(hub.input(2, Frame::Received(outgoing)).unwrap().is_empty());
         assert!(hub.input(1, Frame::Ack(outgoing)).unwrap().is_empty());
         assert!(hub.input(2, Frame::Ack(outgoing)).unwrap().is_empty());
@@ -1132,7 +1389,12 @@ mod tests {
         assert!(hub.input(1, Frame::Ack(third)).unwrap().is_empty());
         assert!(hub.input(1, Frame::Ack(fourth)).unwrap().is_empty());
         let commit = hub.input(1, Frame::Ack(second)).unwrap();
-        assert_eq!(commit, (0..4).map(|rank| (rank, Frame::Commit(0))).collect::<Vec<_>>());
+        assert_eq!(
+            commit,
+            (0..4)
+                .map(|rank| (rank, Frame::Commit(0)))
+                .collect::<Vec<_>>()
+        );
         assert_eq!(hub.active_count, 0);
     }
 
@@ -1146,11 +1408,15 @@ mod tests {
         assert!(hub.input(0, Frame::Offer(low)).unwrap().is_empty());
         assert!(hub.input(127, Frame::Offer(high)).unwrap().is_empty());
         hub.input(126, Frame::Ack(busy)).unwrap();
-        assert_eq!(hub.input(9, Frame::Ack(busy)).unwrap(),
-                   vec![(127, Frame::Grant(high)), (9, Frame::Grant(high))]);
+        assert_eq!(
+            hub.input(9, Frame::Ack(busy)).unwrap(),
+            vec![(127, Frame::Grant(high)), (9, Frame::Grant(high))]
+        );
         hub.input(127, Frame::Ack(high)).unwrap();
-        assert_eq!(hub.input(9, Frame::Ack(high)).unwrap(),
-                   vec![(0, Frame::Grant(low)), (9, Frame::Grant(low))]);
+        assert_eq!(
+            hub.input(9, Frame::Ack(high)).unwrap(),
+            vec![(0, Frame::Grant(low)), (9, Frame::Grant(low))]
+        );
     }
 
     #[test]
@@ -1182,8 +1448,10 @@ mod tests {
         let incoming = packet(2, 0, 0);
         hub.input(0, Frame::Offer(first)).unwrap();
         assert!(hub.input(2, Frame::Offer(incoming)).unwrap().is_empty());
-        assert_eq!(hub.input(0, Frame::Ack(first)).unwrap(),
-                   vec![(2, Frame::Grant(incoming)), (0, Frame::Grant(incoming))]);
+        assert_eq!(
+            hub.input(0, Frame::Ack(first)).unwrap(),
+            vec![(2, Frame::Grant(incoming)), (0, Frame::Grant(incoming))]
+        );
         assert!(hub.input(0, Frame::Ack(first)).unwrap().is_empty());
         assert!(hub.input(1, Frame::Ack(first)).unwrap().is_empty());
         assert!(hub.input(2, Frame::Ack(incoming)).unwrap().is_empty());
@@ -1217,17 +1485,34 @@ mod tests {
         let ab = packet(0, 1, 0);
         let bc = packet(1, 2, 0);
         let ca = packet(2, 0, 0);
-        assert_eq!(hub.input(0, Frame::Offer(ab)).unwrap()[1], (1, Frame::Grant(ab)));
+        assert_eq!(
+            hub.input(0, Frame::Offer(ab)).unwrap()[1],
+            (1, Frame::Grant(ab))
+        );
         assert!(hub.input(1, Frame::Offer(bc)).unwrap().is_empty());
         assert!(hub.input(2, Frame::Offer(ca)).unwrap().is_empty());
         assert!(hub.input(1, Frame::Ack(ab)).unwrap().is_empty());
         assert!(hub.input(1, Frame::Ack(ab)).unwrap().is_empty());
-        assert_eq!(hub.input(0, Frame::Ack(ab)).unwrap()[0], (1, Frame::Grant(bc)));
+        assert_eq!(
+            hub.input(0, Frame::Ack(ab)).unwrap()[0],
+            (1, Frame::Grant(bc))
+        );
         assert!(hub.input(1, Frame::Ack(ab)).unwrap().is_empty());
         assert!(hub.input(2, Frame::Ack(ab)).is_err());
-        assert!(hub.input(1, Frame::Ack(Packet { rows: ab.rows + 1, ..ab })).is_err());
+        assert!(hub
+            .input(
+                1,
+                Frame::Ack(Packet {
+                    rows: ab.rows + 1,
+                    ..ab
+                })
+            )
+            .is_err());
         assert!(hub.input(2, Frame::Ack(bc)).unwrap().is_empty());
-        assert_eq!(hub.input(1, Frame::Ack(bc)).unwrap()[0], (2, Frame::Grant(ca)));
+        assert_eq!(
+            hub.input(1, Frame::Ack(bc)).unwrap()[0],
+            (2, Frame::Grant(ca))
+        );
         assert!(hub.input(0, Frame::Ack(ca)).unwrap().is_empty());
         assert!(hub.input(2, Frame::Ack(ca)).unwrap().is_empty());
         for rank in 0..2 {
@@ -1250,7 +1535,10 @@ mod tests {
         for released in [first, second] {
             assert_eq!(hub.input(0, Frame::Offer(released)).unwrap().len(), 2);
             assert!(hub.input(0, Frame::Ack(released)).unwrap().is_empty());
-            assert!(hub.input(released.destination, Frame::Ack(released)).unwrap().is_empty());
+            assert!(hub
+                .input(released.destination, Frame::Ack(released))
+                .unwrap()
+                .is_empty());
         }
         assert_eq!(hub.input(0, Frame::Offer(current)).unwrap().len(), 2);
         assert!(hub.input(1, Frame::Ack(first)).unwrap().is_empty());
@@ -1263,7 +1551,15 @@ mod tests {
         let mut hub = Scheduler::new(2, 2, 8);
         assert!(hub.input(1, Frame::Offer(packet(0, 1, 0))).is_err());
         assert!(hub.input(0, Frame::Offer(packet(0, 1, 1))).is_err());
-        assert!(hub.input(0, Frame::Offer(Packet { rows: 9, ..packet(0, 1, 0) })).is_err());
+        assert!(hub
+            .input(
+                0,
+                Frame::Offer(Packet {
+                    rows: 9,
+                    ..packet(0, 1, 0)
+                })
+            )
+            .is_err());
         assert!(hub.input(0, Frame::Seal(0)).unwrap().is_empty());
         assert!(hub.input(0, Frame::Offer(packet(0, 1, 0))).is_err());
         assert_eq!(hub.input(1, Frame::Seal(0)).unwrap().len(), 2);
@@ -1272,19 +1568,33 @@ mod tests {
 
     #[test]
     fn wire_roundtrip_checks_reserved_bytes() {
-        let message = Frame::Grant(Packet { depth: u64::MAX, ..packet(0, 1, u64::MAX) });
+        let message = Frame::Grant(Packet {
+            depth: u64::MAX,
+            ..packet(0, 1, u64::MAX)
+        });
         let mut encoded = message.encode();
         assert_eq!(Frame::decode(encoded).unwrap(), message);
         encoded[5] = 1;
         assert!(Frame::decode(encoded).is_err());
-        for message in [Frame::Ready, Frame::Received(packet(0, 1, 0)), Frame::Seal(9), Frame::Commit(9), Frame::Fail(10), Frame::Abort(10), Frame::Close] {
+        for message in [
+            Frame::Ready,
+            Frame::Received(packet(0, 1, 0)),
+            Frame::Seal(9),
+            Frame::Commit(9),
+            Frame::Fail(10),
+            Frame::Abort(10),
+            Frame::Close,
+        ] {
             assert_eq!(Frame::decode(message.encode()).unwrap(), message);
         }
     }
 
     #[test]
     fn packet_header_encodes_multiple_shards_and_verifies_total_rows() {
-        let original = [ShardRun { shard: 1, rows: 3 }, ShardRun { shard: 2, rows: 2 }];
+        let original = [
+            ShardRun { shard: 1, rows: 3 },
+            ShardRun { shard: 2, rows: 2 },
+        ];
         let mut runs = Vec::new();
         let mut header = Vec::new();
         encode_runs(&original, &mut header);
@@ -1312,7 +1622,8 @@ mod tests {
                 |frame| {
                     assert_eq!(frame, Frame::Grant(stalled));
                     entered.send(()).unwrap();
-                    gate.recv_timeout(Duration::from_secs(5)).map_err(|error| error.to_string())
+                    gate.recv_timeout(Duration::from_secs(5))
+                        .map_err(|error| error.to_string())
                 },
                 rank_0,
                 &writer_terminal,
@@ -1342,8 +1653,11 @@ mod tests {
         let reserve = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = reserve.local_addr().unwrap();
         drop(reserve);
-        let starter = thread::spawn(move || PacketClient::connect(address, address, 0, 2, 2, 8, &[5; 128], &[2; 16]).unwrap());
-        let mut receiver = PacketClient::connect(address, address, 1, 2, 2, 8, &[5; 128], &[2; 16]).unwrap();
+        let starter = thread::spawn(move || {
+            PacketClient::connect(address, address, 0, 2, 2, 8, &[5; 128], &[2; 16]).unwrap()
+        });
+        let mut receiver =
+            PacketClient::connect(address, address, 1, 2, 2, 8, &[5; 128], &[2; 16]).unwrap();
         let mut sender = starter.join().unwrap();
         let p = packet(0, 1, 0);
         sender.send(Frame::Offer(p)).unwrap();
@@ -1359,7 +1673,10 @@ mod tests {
         sender.send(Frame::Seal(1)).unwrap();
         receiver.send(Frame::Fail(PACKET_DEADLINE)).unwrap();
         assert_eq!(sender.next_after_seal(), Frame::Abort(PACKET_DEADLINE));
-        assert_eq!(receiver.next(Some(DEADLINE)), Some(Frame::Abort(PACKET_DEADLINE)));
+        assert_eq!(
+            receiver.next(Some(DEADLINE)),
+            Some(Frame::Abort(PACKET_DEADLINE))
+        );
         assert_eq!(sender.terminal_code(), PACKET_DEADLINE);
     }
 
@@ -1370,14 +1687,23 @@ mod tests {
         listener.set_nonblocking(true).unwrap();
         let tag = handshake_tag(&[5; 128], &[6; 16], 1);
         let hub = thread::spawn(move || {
-            run_hub(listener, Scheduler::new(3, 2, 8), tag, Instant::now() + Duration::from_secs(3))
+            run_hub(
+                listener,
+                Scheduler::new(3, 2, 8),
+                tag,
+                Instant::now() + Duration::from_secs(3),
+            )
         });
-        let mut peers = (0..3).map(|rank| {
-            let mut socket = TcpStream::connect(address).unwrap();
-            socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
-            write_hello(&mut socket, rank, &tag).unwrap();
-            socket
-        }).collect::<Vec<_>>();
+        let mut peers = (0..3)
+            .map(|rank| {
+                let mut socket = TcpStream::connect(address).unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                write_hello(&mut socket, rank, &tag).unwrap();
+                socket
+            })
+            .collect::<Vec<_>>();
         for peer in &mut peers {
             assert_eq!(Frame::read(peer).unwrap(), Frame::Ready);
         }
@@ -1386,16 +1712,23 @@ mod tests {
         for transfer in [older, newer] {
             Frame::Offer(transfer).write(&mut peers[0]).unwrap();
             assert_eq!(Frame::read(&mut peers[0]).unwrap(), Frame::Grant(transfer));
-            assert_eq!(Frame::read(&mut peers[transfer.destination as usize]).unwrap(), Frame::Grant(transfer));
+            assert_eq!(
+                Frame::read(&mut peers[transfer.destination as usize]).unwrap(),
+                Frame::Grant(transfer)
+            );
             Frame::Ack(transfer).write(&mut peers[0]).unwrap();
         }
         for peer in &mut peers {
             Frame::Seal(0).write(peer).unwrap();
         }
         Frame::Ack(newer).write(&mut peers[2]).unwrap();
-        peers[0].set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        peers[0]
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
         assert!(Frame::read(&mut peers[0]).is_err());
-        peers[0].set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        peers[0]
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
 
         Frame::Ack(older).write(&mut peers[1]).unwrap();
         for peer in &mut peers {
@@ -1419,10 +1752,16 @@ mod tests {
         let outstanding = packet(0, 1, 0);
         sender.send(Frame::Offer(outstanding)).unwrap();
         assert_eq!(sender.next(Some(DEADLINE)), Some(Frame::Grant(outstanding)));
-        assert_eq!(receiver.next(Some(DEADLINE)), Some(Frame::Grant(outstanding)));
+        assert_eq!(
+            receiver.next(Some(DEADLINE)),
+            Some(Frame::Grant(outstanding))
+        );
         sender.send(Frame::Ack(outstanding)).unwrap();
         receiver.socket.shutdown(Shutdown::Both).unwrap();
-        assert_eq!(sender.next(Some(DEADLINE)), Some(Frame::Abort(REMOTE_FAILURE)));
+        assert_eq!(
+            sender.next(Some(DEADLINE)),
+            Some(Frame::Abort(REMOTE_FAILURE))
+        );
         assert_eq!(sender.terminal_code(), REMOTE_FAILURE);
     }
 
@@ -1434,7 +1773,8 @@ mod tests {
         let starter = thread::spawn(move || {
             PacketClient::connect(address, address, 0, 2, 2, 8, &[5; 128], &[4; 16]).unwrap()
         });
-        let other = PacketClient::connect(address, address, 1, 2, 2, 8, &[5; 128], &[4; 16]).unwrap();
+        let other =
+            PacketClient::connect(address, address, 1, 2, 2, 8, &[5; 128], &[4; 16]).unwrap();
         let mut sealed = starter.join().unwrap();
         sealed.send(Frame::Seal(0)).unwrap();
         let (result, observed) = mpsc::channel();
@@ -1452,9 +1792,12 @@ mod tests {
         let reserve = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = reserve.local_addr().unwrap();
         drop(reserve);
-        let connect = move |rank| PacketClient::connect_with_receive_slots(
-            address, address, rank, 2, 2, 8, &[5; 128], &[8; 16], 3,
-        ).unwrap();
+        let connect = move |rank| {
+            PacketClient::connect_with_receive_slots(
+                address, address, rank, 2, 2, 8, &[5; 128], &[8; 16], 3,
+            )
+            .unwrap()
+        };
         let starter = thread::spawn(move || connect(0));
         let owner = connect(1);
         let mut sealed = starter.join().unwrap();
@@ -1468,14 +1811,25 @@ mod tests {
 
         // Keep rank 1 connected, never issue an Offer and never drop its owner lease.
         let _stalled_owner = watchdog.lease_for(Duration::from_millis(20));
-        assert_eq!(sealed.next(Some(Duration::from_secs(3))), Some(Frame::Abort(REMOTE_FAILURE)));
-        assert_eq!(owner.next(Some(Duration::from_secs(3))), Some(Frame::Abort(REMOTE_FAILURE)));
+        assert_eq!(
+            sealed.next(Some(Duration::from_secs(3))),
+            Some(Frame::Abort(REMOTE_FAILURE))
+        );
+        assert_eq!(
+            owner.next(Some(Duration::from_secs(3))),
+            Some(Frame::Abort(REMOTE_FAILURE))
+        );
     }
 
     #[test]
     fn compact_job_tokens_require_exactly_128_hex_bits() {
-        assert_eq!(parse_job_token(Some("0123456789abcdefFEDCBA9876543210")).unwrap(),
-            [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10]);
+        assert_eq!(
+            parse_job_token(Some("0123456789abcdefFEDCBA9876543210")).unwrap(),
+            [
+                0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54,
+                0x32, 0x10
+            ]
+        );
         assert!(parse_job_token(None).is_err());
         assert!(parse_job_token(Some("abc")).is_err());
         assert!(parse_job_token(Some("0123456789abcdef0123456789abcdeg")).is_err());
@@ -1490,11 +1844,18 @@ mod tests {
         let mut scheduler = Scheduler::new(2, 2, 8);
         scheduler.credit_timeout = Duration::from_millis(200);
         let hub = thread::spawn(move || {
-            run_hub(listener, scheduler, tag, Instant::now() + Duration::from_secs(3))
+            run_hub(
+                listener,
+                scheduler,
+                tag,
+                Instant::now() + Duration::from_secs(3),
+            )
         });
         let hello = |rank| {
             let mut socket = TcpStream::connect(address).unwrap();
-            socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
             write_hello(&mut socket, rank, &tag).unwrap();
             socket
         };
@@ -1505,10 +1866,22 @@ mod tests {
         let stalled = packet(0, 1, 0);
         Frame::Offer(stalled).write(&mut source).unwrap();
         assert_eq!(Frame::read(&mut source).unwrap(), Frame::Grant(stalled));
-        assert_eq!(Frame::read(&mut destination).unwrap(), Frame::Grant(stalled));
-        assert_eq!(Frame::read(&mut source).unwrap(), Frame::Abort(REMOTE_FAILURE));
-        assert_eq!(Frame::read(&mut destination).unwrap(), Frame::Abort(REMOTE_FAILURE));
-        assert_eq!(hub.join().unwrap().unwrap_err(), "SEGMENT_PACKET_CREDIT_TIMEOUT");
+        assert_eq!(
+            Frame::read(&mut destination).unwrap(),
+            Frame::Grant(stalled)
+        );
+        assert_eq!(
+            Frame::read(&mut source).unwrap(),
+            Frame::Abort(REMOTE_FAILURE)
+        );
+        assert_eq!(
+            Frame::read(&mut destination).unwrap(),
+            Frame::Abort(REMOTE_FAILURE)
+        );
+        assert_eq!(
+            hub.join().unwrap().unwrap_err(),
+            "SEGMENT_PACKET_CREDIT_TIMEOUT"
+        );
     }
 
     #[test]
@@ -1521,14 +1894,23 @@ mod tests {
         let mut stalled = TcpStream::connect(address).unwrap();
         stalled.write_all(&[0]).unwrap();
         let hub = thread::spawn(move || {
-            run_hub(listener, Scheduler::new(2, 2, 8), tag, Instant::now() + Duration::from_secs(5))
+            run_hub(
+                listener,
+                Scheduler::new(2, 2, 8),
+                tag,
+                Instant::now() + Duration::from_secs(5),
+            )
         });
-        let mut healthy = (0..2).map(|rank| {
-            let mut socket = TcpStream::connect(address).unwrap();
-            socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-            write_hello(&mut socket, rank, &tag).unwrap();
-            socket
-        }).collect::<Vec<_>>();
+        let mut healthy = (0..2)
+            .map(|rank| {
+                let mut socket = TcpStream::connect(address).unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                write_hello(&mut socket, rank, &tag).unwrap();
+                socket
+            })
+            .collect::<Vec<_>>();
         for peer in &mut healthy {
             assert_eq!(Frame::read(peer).unwrap(), Frame::Ready);
             Frame::Close.write(peer).unwrap();
@@ -1597,15 +1979,27 @@ mod tests {
         let nccl_id = [9; 128];
         let previous = handshake_tag(&nccl_id, &[3; 16], 1);
         let current = handshake_tag(&nccl_id, &[4; 16], 1);
-        let hub = thread::spawn(move || run_hub(listener, Scheduler::new(2, 2, 8), current, Instant::now() + Duration::from_secs(3)));
+        let hub = thread::spawn(move || {
+            run_hub(
+                listener,
+                Scheduler::new(2, 2, 8),
+                current,
+                Instant::now() + Duration::from_secs(3),
+            )
+        });
         let hello = |rank, tag| {
             let mut socket = TcpStream::connect(address).unwrap();
-            socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
             write_hello(&mut socket, rank, &tag).unwrap();
             socket
         };
         let mut stale = hello(0, previous);
-        assert_eq!(Frame::read(&mut stale).unwrap(), Frame::Abort(REMOTE_FAILURE));
+        assert_eq!(
+            Frame::read(&mut stale).unwrap(),
+            Frame::Abort(REMOTE_FAILURE)
+        );
         let mut fresh_0 = hello(0, current);
         let mut fresh_1 = hello(1, current);
         assert_eq!(Frame::read(&mut fresh_0).unwrap(), Frame::Ready);

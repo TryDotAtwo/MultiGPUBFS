@@ -337,9 +337,27 @@ fn compact_route_packet_adds_no_duplicate_payload_planes() {
     let base = shard_ab_shared_buffers(shape(), false).unwrap();
     let ledger = with_compact_route_bank(&base).unwrap();
     assert_eq!(ledger.total() - base.total(), 256);
-    assert_eq!(ledger.allocations.iter().filter(|a| a.name == "generation_control").count(), 1);
-    assert!(!ledger.allocations.iter().any(|a| a.name.starts_with("route_bank_")));
+    assert_eq!(
+        ledger
+            .allocations
+            .iter()
+            .filter(|a| a.name == "generation_control")
+            .count(),
+        1
+    );
+    assert!(!ledger
+        .allocations
+        .iter()
+        .any(|a| a.name.starts_with("route_bank_")));
     for allocation in &base.allocations {
-        assert_eq!(ledger.allocations.iter().find(|a| a.name == allocation.name).unwrap().payload_bytes, allocation.payload_bytes);
+        assert_eq!(
+            ledger
+                .allocations
+                .iter()
+                .find(|a| a.name == allocation.name)
+                .unwrap()
+                .payload_bytes,
+            allocation.payload_bytes
+        );
     }
 }

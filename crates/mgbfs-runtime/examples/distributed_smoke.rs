@@ -96,9 +96,11 @@ fn run() -> Result<()> {
             untouched_vram_reserve: 1 << 30,
         },
     )?;
-    extern "C" { fn cudaGetDevice(device:*mut i32)->i32; }
-    let mut actual_device=-1;
-    if unsafe {cudaGetDevice(&mut actual_device)}!=0 || actual_device!=local as i32 {
+    extern "C" {
+        fn cudaGetDevice(device: *mut i32) -> i32;
+    }
+    let mut actual_device = -1;
+    if unsafe { cudaGetDevice(&mut actual_device) } != 0 || actual_device != local as i32 {
         return Err("LOCAL_DEVICE_CHANGED_BY_CONSTRUCTOR".into());
     }
     eprintln!("MGBFS_DEVICE_PLACEMENT rank={rank} local={local} actual={actual_device}");

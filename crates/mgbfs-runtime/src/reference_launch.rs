@@ -5,8 +5,12 @@ pub fn calibration_layers(value: Option<&str>) -> Result<Option<u32>> {
     match value {
         None => Ok(None),
         Some(value) => {
-            let layers = value.parse::<u32>().map_err(|_| "ENV_MGBFS_CALIBRATION_LAYERS")?;
-            if layers == 0 { return Err("ENV_MGBFS_CALIBRATION_LAYERS".into()); }
+            let layers = value
+                .parse::<u32>()
+                .map_err(|_| "ENV_MGBFS_CALIBRATION_LAYERS")?;
+            if layers == 0 {
+                return Err("ENV_MGBFS_CALIBRATION_LAYERS".into());
+            }
             Ok(Some(layers))
         }
     }
@@ -14,7 +18,9 @@ pub fn calibration_layers(value: Option<&str>) -> Result<Option<u32>> {
 
 /// Startup-only reserve; native admission still checks warmed free memory.
 pub fn vram_reserve_bytes(value: Option<&str>) -> Result<u64> {
-    let bytes = value.unwrap_or("1073741824").parse::<u64>()
+    let bytes = value
+        .unwrap_or("1073741824")
+        .parse::<u64>()
         .map_err(|_| "ENV_MGBFS_VRAM_RESERVE_BYTES")?;
     if bytes < 64 << 20 {
         return Err("ENV_MGBFS_VRAM_RESERVE_BYTES".into());
@@ -26,30 +32,41 @@ pub fn vram_reserve_bytes(value: Option<&str>) -> Result<u64> {
 /// until the multi-rank graph/archive hardware acceptance gates pass.
 pub fn graph_batches(value: Option<&str>) -> Result<u32> {
     match value.unwrap_or("0") {
-        "0" => Ok(0), "32" => Ok(32),
+        "0" => Ok(0),
+        "32" => Ok(32),
         _ => Err("ENV_MGBFS_CUDA_GRAPH_BATCHES".into()),
     }
 }
 
 /// Enough archive credits for in-flight graph windows plus the next window's
 /// copies. Depths shorter than 32 batches need only their actual window width.
-pub fn graph_archive_credits(rounds: u32, batch: u32, archive_rows: u32,
-                             inflight: usize) -> Result<usize> {
+pub fn graph_archive_credits(
+    rounds: u32,
+    batch: u32,
+    archive_rows: u32,
+    inflight: usize,
+) -> Result<usize> {
     if rounds == 0 || batch == 0 || archive_rows == 0 || inflight == 0 {
         return Err("GRAPH_ARCHIVE_CREDIT_SHAPE".into());
     }
     let width = u64::from(archive_rows.min(batch));
-    let frames = u64::from(batch)/width + u64::from(u64::from(batch)%width != 0);
-    let windows = u64::try_from(inflight).map_err(|_| "GRAPH_ARCHIVE_CREDIT_OVERFLOW")?
-        .checked_add(1).ok_or("GRAPH_ARCHIVE_CREDIT_OVERFLOW")?;
-    let credits = u64::from(rounds.min(32)).checked_mul(frames)
-        .and_then(|x| x.checked_mul(windows)).ok_or("GRAPH_ARCHIVE_CREDIT_OVERFLOW")?;
+    let frames = u64::from(batch) / width + u64::from(u64::from(batch) % width != 0);
+    let windows = u64::try_from(inflight)
+        .map_err(|_| "GRAPH_ARCHIVE_CREDIT_OVERFLOW")?
+        .checked_add(1)
+        .ok_or("GRAPH_ARCHIVE_CREDIT_OVERFLOW")?;
+    let credits = u64::from(rounds.min(32))
+        .checked_mul(frames)
+        .and_then(|x| x.checked_mul(windows))
+        .ok_or("GRAPH_ARCHIVE_CREDIT_OVERFLOW")?;
     usize::try_from(credits).map_err(|_| "GRAPH_ARCHIVE_CREDIT_OVERFLOW".into())
 }
 
 /// Setup-only bound for device-count epochs. Does not enlarge data buffers.
 pub fn inflight_batches(value: Option<&str>) -> Result<usize> {
-    let count=value.unwrap_or("2").parse::<usize>()
+    let count = value
+        .unwrap_or("2")
+        .parse::<usize>()
         .map_err(|_| "ENV_MGBFS_INFLIGHT_BATCHES")?;
     if !(1..=32).contains(&count) {
         return Err("ENV_MGBFS_INFLIGHT_BATCHES".into());

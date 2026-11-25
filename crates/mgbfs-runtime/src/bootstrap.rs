@@ -132,35 +132,58 @@ mod outcome_escalation_tests {
 
 // Signal handler performs only a lock-free atomic store. The sideband
 // thread turns it into the ordinary group cancellation protocol.
-#[cfg(target_os="linux")]
+#[cfg(target_os = "linux")]
 static SEARCH_SIGNAL: AtomicBool = AtomicBool::new(false);
-#[cfg(target_os="linux")]
-extern "C" fn search_signal(_: libc::c_int) { SEARCH_SIGNAL.store(true,Ordering::Release); }
-#[cfg(target_os="linux")]
-pub struct SearchSignals { previous: [libc::sigaction;2] }
-#[cfg(target_os="linux")]
+#[cfg(target_os = "linux")]
+extern "C" fn search_signal(_: libc::c_int) {
+    SEARCH_SIGNAL.store(true, Ordering::Release);
+}
+#[cfg(target_os = "linux")]
+pub struct SearchSignals {
+    previous: [libc::sigaction; 2],
+}
+#[cfg(target_os = "linux")]
 impl SearchSignals {
-    pub fn install()->Result<Self> { unsafe {
-        SEARCH_SIGNAL.store(false,Ordering::Release);
-        let mut action:libc::sigaction=std::mem::zeroed();action.sa_sigaction=search_signal as usize;
-        libc::sigemptyset(&mut action.sa_mask);action.sa_flags=libc::SA_RESTART;
-        let mut previous:[libc::sigaction;2]=std::mem::zeroed();
-        for (i,sig) in [libc::SIGTERM,libc::SIGINT].into_iter().enumerate(){
-            if libc::sigaction(sig,&action,&mut previous[i])!=0 {
-                for (j,old_sig) in [libc::SIGTERM,libc::SIGINT].into_iter().take(i).enumerate(){libc::sigaction(old_sig,&previous[j],std::ptr::null_mut());}
-                return Err("SEARCH_SIGNAL_INSTALL".into());
+    pub fn install() -> Result<Self> {
+        unsafe {
+            SEARCH_SIGNAL.store(false, Ordering::Release);
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = search_signal as usize;
+            libc::sigemptyset(&mut action.sa_mask);
+            action.sa_flags = libc::SA_RESTART;
+            let mut previous: [libc::sigaction; 2] = std::mem::zeroed();
+            for (i, sig) in [libc::SIGTERM, libc::SIGINT].into_iter().enumerate() {
+                if libc::sigaction(sig, &action, &mut previous[i]) != 0 {
+                    for (j, old_sig) in [libc::SIGTERM, libc::SIGINT]
+                        .into_iter()
+                        .take(i)
+                        .enumerate()
+                    {
+                        libc::sigaction(old_sig, &previous[j], std::ptr::null_mut());
+                    }
+                    return Err("SEARCH_SIGNAL_INSTALL".into());
+                }
+            }
+            Ok(Self { previous })
+        }
+    }
+}
+#[cfg(target_os = "linux")]
+impl Drop for SearchSignals {
+    fn drop(&mut self) {
+        unsafe {
+            for (i, sig) in [libc::SIGTERM, libc::SIGINT].into_iter().enumerate() {
+                libc::sigaction(sig, &self.previous[i], std::ptr::null_mut());
             }
         }
-        Ok(Self{previous})
-    }}
+    }
 }
-#[cfg(target_os="linux")]
-impl Drop for SearchSignals {fn drop(&mut self){unsafe{
-    for (i,sig) in [libc::SIGTERM,libc::SIGINT].into_iter().enumerate(){libc::sigaction(sig,&self.previous[i],std::ptr::null_mut());}
-}}}
-fn observe_search_signal(local:&AtomicU8,cancelled:&AtomicBool){
-    #[cfg(target_os="linux")]
-    if SEARCH_SIGNAL.load(Ordering::Acquire){local.store(2,Ordering::Release);cancelled.store(true,Ordering::Release);}
+fn observe_search_signal(local: &AtomicU8, cancelled: &AtomicBool) {
+    #[cfg(target_os = "linux")]
+    if SEARCH_SIGNAL.load(Ordering::Acquire) {
+        local.store(2, Ordering::Release);
+        cancelled.store(true, Ordering::Release);
+    }
 }
 
 pub struct SearchSideband {
@@ -326,7 +349,7 @@ fn search_sideband_loop(
         .ok_or("SEARCH_SIDEBAND_TIMEOUT")?;
     if peers.len() == 1 {
         loop {
-            observe_search_signal(local,cancelled);
+            observe_search_signal(local, cancelled);
             if std::time::Instant::now() >= deadline || retirement.failed.load(Ordering::Acquire) {
                 cancelled.store(true, Ordering::Release);
                 return Err("SEARCH_RETIREMENT_TIMEOUT".into());
@@ -354,7 +377,7 @@ fn search_sideband_loop(
     let mut sent = 0u8;
     let mut ready = vec![0u8; peers.len()];
     loop {
-        observe_search_signal(local,cancelled);
+        observe_search_signal(local, cancelled);
         if std::time::Instant::now() >= deadline {
             cancelled.store(true, Ordering::Release);
             return Err("SEARCH_SIDEBAND_TIMEOUT".into());
@@ -431,14 +454,22 @@ pub enum BoundaryPhase {
     SessionReuse = 5,
 }
 impl BootstrapGroup {
-    pub fn start_search_sideband(&mut self, timeout: std::time::Duration) -> Result<SearchSideband> {
+    pub fn start_search_sideband(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Result<SearchSideband> {
         self.start_search_sideband_with_report(timeout, Arc::new(AtomicU8::new(0)))
     }
     pub fn start_search_sideband_with_report(
-        &mut self, timeout: std::time::Duration, report: Arc<AtomicU8>,
+        &mut self,
+        timeout: std::time::Duration,
+        report: Arc<AtomicU8>,
     ) -> Result<SearchSideband> {
-        if !self.configuration_agreed || self.next_boundary < 2
-            || self.peers.len() <= self.rank as usize || timeout.is_zero() {
+        if !self.configuration_agreed
+            || self.next_boundary < 2
+            || self.peers.len() <= self.rank as usize
+            || timeout.is_zero()
+        {
             return Err("SEARCH_SIDEBAND_ORDER".into());
         }
         let rank = self.rank;

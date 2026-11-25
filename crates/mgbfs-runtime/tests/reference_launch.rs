@@ -4,10 +4,13 @@ use mgbfs_runtime::reference_launch::macro_depth_for_launch;
 #[test]
 fn calibration_limit_is_optional_positive_and_not_graph_completion() {
     use mgbfs_runtime::reference_launch::calibration_layers;
-    assert_eq!(calibration_layers(None).unwrap(),None);
-    assert_eq!(calibration_layers(Some("34")).unwrap(),Some(34));
-    for value in ["0","-1","bad","4294967296"] {
-        assert_eq!(calibration_layers(Some(value)).unwrap_err(),"ENV_MGBFS_CALIBRATION_LAYERS");
+    assert_eq!(calibration_layers(None).unwrap(), None);
+    assert_eq!(calibration_layers(Some("34")).unwrap(), Some(34));
+    for value in ["0", "-1", "bad", "4294967296"] {
+        assert_eq!(
+            calibration_layers(Some(value)).unwrap_err(),
+            "ENV_MGBFS_CALIBRATION_LAYERS"
+        );
     }
 }
 
@@ -18,7 +21,10 @@ fn reserve_is_explicit_with_driver_headroom_and_rejects_invalid_bytes() {
     assert_eq!(reserve(Some("268435456")).unwrap(), 256 << 20);
     assert_eq!(reserve(Some("67108864")).unwrap(), 64 << 20);
     for value in ["0", "1", "67108863", "-1", "bad", "18446744073709551616"] {
-        assert_eq!(reserve(Some(value)).unwrap_err(), "ENV_MGBFS_VRAM_RESERVE_BYTES");
+        assert_eq!(
+            reserve(Some(value)).unwrap_err(),
+            "ENV_MGBFS_VRAM_RESERVE_BYTES"
+        );
     }
 }
 
@@ -29,7 +35,10 @@ fn full_graph_window_policy_is_explicit_and_cluster_agreed() {
     assert_eq!(graph_batches(Some("0")).unwrap(), 0);
     assert_eq!(graph_batches(Some("32")).unwrap(), 32);
     for value in ["1", "2", "31", "33", "-1", "bad", ""] {
-        assert_eq!(graph_batches(Some(value)).unwrap_err(), "ENV_MGBFS_CUDA_GRAPH_BATCHES");
+        assert_eq!(
+            graph_batches(Some(value)).unwrap_err(),
+            "ENV_MGBFS_CUDA_GRAPH_BATCHES"
+        );
     }
 }
 
@@ -40,21 +49,27 @@ fn graph_window_archive_credits_cover_preparation_and_all_inflight_windows() {
     assert_eq!(credits(1000, 32768, 8192, 2).unwrap(), 384);
     assert_eq!(credits(3, 32768, 32768, 2).unwrap(), 9);
     assert_eq!(credits(1000, 9, 4, 1).unwrap(), 192);
-    for args in [(0,1,1,1),(1,0,1,1),(1,1,0,1),(1,1,1,0)] {
-        assert_eq!(credits(args.0,args.1,args.2,args.3).unwrap_err(), "GRAPH_ARCHIVE_CREDIT_SHAPE");
+    for args in [(0, 1, 1, 1), (1, 0, 1, 1), (1, 1, 0, 1), (1, 1, 1, 0)] {
+        assert_eq!(
+            credits(args.0, args.1, args.2, args.3).unwrap_err(),
+            "GRAPH_ARCHIVE_CREDIT_SHAPE"
+        );
     }
-    assert!(credits(u32::MAX,u32::MAX,1,usize::MAX).is_err());
+    assert!(credits(u32::MAX, u32::MAX, 1, usize::MAX).is_err());
 }
 
 #[test]
 fn bounded_device_epoch_queue_preserves_legacy_default_and_accepts_32() {
     use mgbfs_runtime::reference_launch::inflight_batches;
-    assert_eq!(inflight_batches(None).unwrap(),2);
+    assert_eq!(inflight_batches(None).unwrap(), 2);
     for value in 1..=32 {
-        assert_eq!(inflight_batches(Some(&value.to_string())).unwrap(),value);
+        assert_eq!(inflight_batches(Some(&value.to_string())).unwrap(), value);
     }
-    for value in ["0","33","-1","bad","999999999999999999999999999"] {
-        assert_eq!(inflight_batches(Some(value)).unwrap_err(),"ENV_MGBFS_INFLIGHT_BATCHES");
+    for value in ["0", "33", "-1", "bad", "999999999999999999999999999"] {
+        assert_eq!(
+            inflight_batches(Some(value)).unwrap_err(),
+            "ENV_MGBFS_INFLIGHT_BATCHES"
+        );
     }
 }
 

@@ -1,41 +1,64 @@
 use std::{fs::File, io::BufReader, path::PathBuf};
 
-#[cfg(all(feature="cuda",target_os="linux"))]
-extern "C" { fn mgbfs_segmented_abi_version() -> u32; fn mgbfs_segmented_strategy_abi_version() -> u32; }
+#[cfg(all(feature = "cuda", target_os = "linux"))]
+extern "C" {
+    fn mgbfs_segmented_abi_version() -> u32;
+    fn mgbfs_segmented_strategy_abi_version() -> u32;
+}
 fn segmented_abi_ready() -> bool {
-    #[cfg(all(feature="cuda",target_os="linux"))]
-    { unsafe { mgbfs_segmented_abi_version() == 3 } }
-    #[cfg(not(all(feature="cuda",target_os="linux")))]
-    { false }
+    #[cfg(all(feature = "cuda", target_os = "linux"))]
+    {
+        unsafe { mgbfs_segmented_abi_version() == 3 }
+    }
+    #[cfg(not(all(feature = "cuda", target_os = "linux")))]
+    {
+        false
+    }
 }
 
-
 fn segmented_warp_abi_ready() -> bool {
-    #[cfg(all(feature="cuda",target_os="linux"))]
-    { unsafe { mgbfs_segmented_strategy_abi_version() == 1 } }
-    #[cfg(not(all(feature="cuda",target_os="linux")))]
-    { false }
+    #[cfg(all(feature = "cuda", target_os = "linux"))]
+    {
+        unsafe { mgbfs_segmented_strategy_abi_version() == 1 }
+    }
+    #[cfg(not(all(feature = "cuda", target_os = "linux")))]
+    {
+        false
+    }
 }
 
 fn native_nearest_ready() -> bool {
     #[cfg(all(feature = "cuda", target_os = "linux"))]
-    { mgbfs_runtime::generic_path_native::available() }
+    {
+        mgbfs_runtime::generic_path_native::available()
+    }
     #[cfg(not(all(feature = "cuda", target_os = "linux")))]
-    { false }
+    {
+        false
+    }
 }
 
 fn native_bidirectional_ready() -> bool {
     #[cfg(all(feature = "cuda", target_os = "linux"))]
-    { mgbfs_runtime::generic_path_native::bidirectional_available() }
+    {
+        mgbfs_runtime::generic_path_native::bidirectional_available()
+    }
     #[cfg(not(all(feature = "cuda", target_os = "linux")))]
-    { false }
+    {
+        false
+    }
 }
 
 fn native_compact_forward_ready() -> bool {
     #[cfg(all(feature = "cuda", target_os = "linux"))]
-    { native_nearest_ready() && mgbfs_runtime::generic_distributed_native::compact_path_available() }
+    {
+        native_nearest_ready()
+            && mgbfs_runtime::generic_distributed_native::compact_path_available()
+    }
     #[cfg(not(all(feature = "cuda", target_os = "linux")))]
-    { false }
+    {
+        false
+    }
 }
 
 fn native_compact_bidirectional_ready() -> bool {
@@ -46,19 +69,33 @@ fn native_compact_bidirectional_ready() -> bool {
 
 fn native_window_bidirectional_ready() -> bool {
     #[cfg(all(feature = "cuda", target_os = "linux"))]
-    { mgbfs_runtime::generic_path_native::window_bidirectional_available() }
+    {
+        mgbfs_runtime::generic_path_native::window_bidirectional_available()
+    }
     #[cfg(not(all(feature = "cuda", target_os = "linux")))]
-    { false }
+    {
+        false
+    }
 }
 
 fn execute() -> Result<(), (i32, String)> {
-    #[cfg(all(feature="cuda",target_os="linux"))]
-    mgbfs_runtime::generic_distributed_run::startup_trace("cli-main-enter").map_err(|e|(1,e))?;
+    #[cfg(all(feature = "cuda", target_os = "linux"))]
+    mgbfs_runtime::generic_distributed_run::startup_trace("cli-main-enter").map_err(|e| (1, e))?;
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     #[cfg(all(feature = "cuda", target_os = "linux"))]
     if matches!(
         args.first().and_then(|x| x.to_str()),
-        Some("run") | Some("bench") | Some("session") | Some("graph") | Some("graph-info") | Some("graph-plan") | Some("graph-local-plan") | Some("graph-rank") | Some("graph-session") | Some("graph-count") | Some("graph-path-nearest")
+        Some("run")
+            | Some("bench")
+            | Some("session")
+            | Some("graph")
+            | Some("graph-info")
+            | Some("graph-plan")
+            | Some("graph-local-plan")
+            | Some("graph-rank")
+            | Some("graph-session")
+            | Some("graph-count")
+            | Some("graph-path-nearest")
     ) {
         match mgbfs_runtime::cuda_loading::configure_cli_before_cuda() {
             Ok(true) => {
@@ -68,7 +105,8 @@ fn execute() -> Result<(), (i32, String)> {
                 use std::os::unix::process::CommandExt;
                 let executable =
                     std::env::current_exe().map_err(|e| (2, format!("CUDA_LOADING_EXEC: {e}")))?;
-                mgbfs_runtime::generic_distributed_run::startup_trace("cli-eager-reexec").map_err(|e|(1,e))?;
+                mgbfs_runtime::generic_distributed_run::startup_trace("cli-eager-reexec")
+                    .map_err(|e| (1, e))?;
                 let error = std::process::Command::new(executable).args(&args).exec();
                 return Err((2, format!("CUDA_LOADING_EXEC: {error}")));
             }
@@ -82,8 +120,9 @@ fn execute() -> Result<(), (i32, String)> {
         }
     }
 
-    #[cfg(all(feature="cuda",target_os="linux"))]
-    mgbfs_runtime::generic_distributed_run::startup_trace("cli-policy-ready").map_err(|e|(1,e))?;
+    #[cfg(all(feature = "cuda", target_os = "linux"))]
+    mgbfs_runtime::generic_distributed_run::startup_trace("cli-policy-ready")
+        .map_err(|e| (1, e))?;
 
     match args.first().and_then(|x| x.to_str()) {
         Some("graph-count") if args.len()==1 => {
@@ -238,8 +277,11 @@ fn main() {
         // torchrun ranks share the pipe, so their JSON tokens can interleave.
         // Serialize first; short terminal records fit one atomic pipe write.
         // Leading newline also isolates JSON from a peer's partial trace line.
-        let line=format!("\n{}\n",serde_json::json!({"status":"ERROR","error":error}));
-        let _=std::io::Write::write_all(&mut std::io::stderr(),line.as_bytes());
+        let line = format!(
+            "\n{}\n",
+            serde_json::json!({"status":"ERROR","error":error})
+        );
+        let _ = std::io::Write::write_all(&mut std::io::stderr(), line.as_bytes());
         std::process::exit(code);
     }
 }

@@ -648,15 +648,15 @@ impl SegmentedDistributedBfs {
                         _ => Ok(()),
                     }
                 })
-                    .map_err(|error| match error.as_str() {
-                        "SEGMENTED_WINDOW_LOOKUP_RESOURCE" => PacketError::Terminal(10),
-                        "SEGMENTED_WINDOW_PEER_ABORT" => PacketError::Terminal(peer_abort),
-                        "CANCELLED" => PacketError::Terminal(PACKET_CANCELLED),
-                        "TIME_LIMIT" => PacketError::Terminal(PACKET_DEADLINE),
-                        "LINEAGE_LIMIT" => PacketError::Terminal(PACKET_LINEAGE_LIMIT),
-                        "LINEAGE_DISK_FULL" => PacketError::Terminal(PACKET_LINEAGE_DISK_FULL),
-                        _ => PacketError::Failure(error),
-                    })?;
+                .map_err(|error| match error.as_str() {
+                    "SEGMENTED_WINDOW_LOOKUP_RESOURCE" => PacketError::Terminal(10),
+                    "SEGMENTED_WINDOW_PEER_ABORT" => PacketError::Terminal(peer_abort),
+                    "CANCELLED" => PacketError::Terminal(PACKET_CANCELLED),
+                    "TIME_LIMIT" => PacketError::Terminal(PACKET_DEADLINE),
+                    "LINEAGE_LIMIT" => PacketError::Terminal(PACKET_LINEAGE_LIMIT),
+                    "LINEAGE_DISK_FULL" => PacketError::Terminal(PACKET_LINEAGE_DISK_FULL),
+                    _ => PacketError::Failure(error),
+                })?;
             }
         }
         transport.complete_owner_wave(wave)?;

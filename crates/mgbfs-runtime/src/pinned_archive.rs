@@ -11,20 +11,28 @@ use std::{
     thread::JoinHandle,
 };
 
-pub(crate) struct HostBlock { ptr: *mut c_void }
+pub(crate) struct HostBlock {
+    ptr: *mut c_void,
+}
 // Disjoint Slot ranges are exclusively owned; the block only owns allocation.
 unsafe impl Send for HostBlock {}
 unsafe impl Sync for HostBlock {}
 impl HostBlock {
     fn new(bytes: usize) -> Result<std::sync::Arc<Self>> {
-        let mut ptr=std::ptr::null_mut();
-        let status=unsafe {cudaHostAlloc(&mut ptr,bytes,0)};
-        if status!=0 {return Err(format!("ARCHIVE_PIN_ALLOC_{status}"));}
-        Ok(std::sync::Arc::new(Self {ptr}))
+        let mut ptr = std::ptr::null_mut();
+        let status = unsafe { cudaHostAlloc(&mut ptr, bytes, 0) };
+        if status != 0 {
+            return Err(format!("ARCHIVE_PIN_ALLOC_{status}"));
+        }
+        Ok(std::sync::Arc::new(Self { ptr }))
     }
 }
 impl Drop for HostBlock {
-    fn drop(&mut self) {unsafe {cudaFreeHost(self.ptr);}}
+    fn drop(&mut self) {
+        unsafe {
+            cudaFreeHost(self.ptr);
+        }
+    }
 }
 pub(crate) struct Slot {
     pub ptr: *mut c_void,
@@ -42,7 +50,12 @@ impl Slot {
             let Some((ptr, ready, allocation)) = crate::session_cache::pinned_take(bytes) else {
                 break;
             };
-            ring.push(Self { ptr, bytes, ready, allocation });
+            ring.push(Self {
+                ptr,
+                bytes,
+                ready,
+                allocation,
+            });
         }
         let missing = slots - ring.len();
         if missing == 0 {
@@ -57,21 +70,34 @@ impl Slot {
     }
 
     fn new(bytes: usize, allocation: std::sync::Arc<HostBlock>, offset: usize) -> Result<Self> {
-        let ptr=unsafe {allocation.ptr.cast::<u8>().add(offset).cast::<c_void>()};
+        let ptr = unsafe { allocation.ptr.cast::<u8>().add(offset).cast::<c_void>() };
         let mut ready = std::ptr::null_mut();
         let status = unsafe { cudaEventCreateWithFlags(&mut ready, 2) };
         if status != 0 {
             return Err(format!("ARCHIVE_EVENT_ALLOC_{status}"));
         }
-        Ok(Self { ptr, bytes, ready, allocation })
+        Ok(Self {
+            ptr,
+            bytes,
+            ready,
+            allocation,
+        })
     }
 }
 impl Drop for Slot {
     fn drop(&mut self) {
         unsafe {
             // Also protects queued slots dropped after a disk/queue failure.
-            if cudaEventSynchronize(self.ready) == 0 &&
-                crate::session_cache::pinned_put(self.ptr,self.bytes,self.ready,self.allocation.clone()) { return; }
+            if cudaEventSynchronize(self.ready) == 0
+                && crate::session_cache::pinned_put(
+                    self.ptr,
+                    self.bytes,
+                    self.ready,
+                    self.allocation.clone(),
+                )
+            {
+                return;
+            }
             cudaEventDestroy(self.ready);
         }
     }
@@ -112,41 +138,65 @@ impl PinnedArchive {
         Self::new_with_failure_report(extent, disk_bytes, width, config_digest, rows, slots, None)
     }
     pub(crate) fn new_with_failure_report<E: Extent + Send + 'static>(
-        extent: E, disk_bytes: u64, width: usize, config_digest: [u8; 32],
-        rows: u32, slots: usize,
+        extent: E,
+        disk_bytes: u64,
+        width: usize,
+        config_digest: [u8; 32],
+        rows: u32,
+        slots: usize,
         failure_report: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
-        let selected_prefix = std::env::var("MGBFS_ARCHIVE_SELECTION").as_deref() == Ok("last_complete_prefix_1000");
-        let selected = selected_prefix || std::env::var("MGBFS_ARCHIVE_SELECTION").as_deref() == Ok("last_complete_small_1000");
-        let state_only = selected || std::env::var("MGBFS_ARCHIVE_SELECTION").as_deref() == Ok("all_states");
+        let selected_prefix =
+            std::env::var("MGBFS_ARCHIVE_SELECTION").as_deref() == Ok("last_complete_prefix_1000");
+        let selected = selected_prefix
+            || std::env::var("MGBFS_ARCHIVE_SELECTION").as_deref()
+                == Ok("last_complete_small_1000");
+        let state_only =
+            selected || std::env::var("MGBFS_ARCHIVE_SELECTION").as_deref() == Ok("all_states");
         let mut plan = ArchiveRingPlan::new(width, rows, slots)?;
         if state_only {
-            let raw = width.checked_mul(rows as usize).ok_or("ARCHIVE_PIN_OVERFLOW")?;
+            let raw = width
+                .checked_mul(rows as usize)
+                .ok_or("ARCHIVE_PIN_OVERFLOW")?;
             // Stable geometry across graph degrees lets resident sessions
             // reuse the same host allocation instead of pinning every pair.
-            plan.slot_bytes = raw.checked_add((65536 - raw % 65536) % 65536)
+            plan.slot_bytes = raw
+                .checked_add((65536 - raw % 65536) % 65536)
                 .ok_or("ARCHIVE_PIN_OVERFLOW")?;
-            plan.pinned_bytes = plan.slot_bytes.checked_mul(slots).ok_or("ARCHIVE_PIN_OVERFLOW")?;
+            plan.pinned_bytes = plan
+                .slot_bytes
+                .checked_mul(slots)
+                .ok_or("ARCHIVE_PIN_OVERFLOW")?;
         }
         let initial_slots = match std::env::var("MGBFS_ARCHIVE_INITIAL_SLOTS") {
-            Ok(value) => value.parse::<usize>().map_err(|_| "ARCHIVE_INITIAL_SLOTS")?,
+            Ok(value) => value
+                .parse::<usize>()
+                .map_err(|_| "ARCHIVE_INITIAL_SLOTS")?,
             Err(std::env::VarError::NotPresent) => slots,
             Err(_) => return Err("ARCHIVE_INITIAL_SLOTS".into()),
         };
-        if initial_slots < 2 || initial_slots > slots { return Err("ARCHIVE_INITIAL_SLOTS".into()); }
-        let mut reserve = Vec::with_capacity(slots-initial_slots);
+        if initial_slots < 2 || initial_slots > slots {
+            return Err("ARCHIVE_INITIAL_SLOTS".into());
+        }
+        let mut reserve = Vec::with_capacity(slots - initial_slots);
         let bytes = plan.slot_bytes;
         crate::session_cache::prepare_pinned(bytes, slots);
         let pinned_bytes = plan.pinned_bytes;
         // Fail disk reservation/header validation before pinning host RAM.
         let mut archive = if selected {
             Archive::new_selected(extent, disk_bytes, width, config_digest)?
-        } else if state_only { Archive::new_state_only(extent, disk_bytes, width, config_digest)? } else { Archive::new_run_durable(extent, disk_bytes, width, config_digest)? };
+        } else if state_only {
+            Archive::new_state_only(extent, disk_bytes, width, config_digest)?
+        } else {
+            Archive::new_run_durable(extent, disk_bytes, width, config_digest)?
+        };
         let (free_tx, free) = mpsc::sync_channel(slots);
         for (index, slot) in Slot::new_ring(bytes, slots)?.into_iter().enumerate() {
             if index < initial_slots {
                 free_tx.try_send(slot).map_err(|_| "ARCHIVE_INIT_QUEUE")?;
-            } else { reserve.push(slot); }
+            } else {
+                reserve.push(slot);
+            }
         }
         let mut device = 0;
         let status = unsafe { cudaGetDevice(&mut device) };
@@ -179,7 +229,8 @@ impl PinnedArchive {
                             let n = count as usize * (width + if state_only { 0 } else { 16 });
                             let bytes =
                                 unsafe { std::slice::from_raw_parts(slot.ptr.cast::<u8>(), n) };
-                            archive.records_wire(depth, u64::from(count), bytes)
+                            archive
+                                .records_wire(depth, u64::from(count), bytes)
                                 .map_err(&on_error)?;
                             // Receiver may have been dropped following another fatal error.
                             free_tx.try_send(slot).map_err(|rejected| {
@@ -188,8 +239,9 @@ impl PinnedArchive {
                                 error
                             })?;
                         }
-                        Message::Layer(depth, count) => archive.layer_commit(depth, count)
-                            .map_err(&on_error)?,
+                        Message::Layer(depth, count) => {
+                            archive.layer_commit(depth, count).map_err(&on_error)?
+                        }
                         Message::ReplaceLast => archive.replace_last_layer().map_err(&on_error)?,
                         Message::Complete => {
                             archive.run_commit().map_err(&on_error)?;
@@ -214,7 +266,9 @@ impl PinnedArchive {
             slots,
             selected,
             selected_prefix,
-            selected_whole: selected && !selected_prefix && std::env::var("MGBFS_SELECTED_WHOLE_ONLY").as_deref() != Ok("0"),
+            selected_whole: selected
+                && !selected_prefix
+                && std::env::var("MGBFS_SELECTED_WHOLE_ONLY").as_deref() != Ok("0"),
             state_only,
             device,
             wait_for_credit: std::env::var("MGBFS_ARCHIVE_CREDIT_MODE").as_deref() == Ok("wait"),
@@ -234,7 +288,7 @@ impl PinnedArchive {
     pub(crate) fn acquire(&self) -> Result<Slot> {
         self.acquire_cancellable(|| false)
     }
-    pub(crate) fn acquire_cancellable(&self,cancelled: impl Fn() -> bool) -> Result<Slot> {
+    pub(crate) fn acquire_cancellable(&self, cancelled: impl Fn() -> bool) -> Result<Slot> {
         let mut current = -1;
         let status = unsafe { cudaGetDevice(&mut current) };
         if status != 0 || current != self.device {
@@ -242,16 +296,24 @@ impl PinnedArchive {
         }
         match self.free.try_recv() {
             Ok(slot) => return Ok(slot),
-            Err(mpsc::TryRecvError::Disconnected) => return Err("ARCHIVE_PIN_RING_FATAL: disconnected".into()),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return Err("ARCHIVE_PIN_RING_FATAL: disconnected".into())
+            }
             Err(mpsc::TryRecvError::Empty) => {}
         }
-        if cancelled() { return Err("ARCHIVE_CREDIT_CANCELLED".into()); }
+        if cancelled() {
+            return Err("ARCHIVE_CREDIT_CANCELLED".into());
+        }
         // Cold pressure path: all allocation and event creation happened at startup.
-        if let Some(slot) = self.reserve.borrow_mut().pop() { return Ok(slot); }
+        if let Some(slot) = self.reserve.borrow_mut().pop() {
+            return Ok(slot);
+        }
         if self.wait_for_credit {
-            crate::archive::recv_archive_credit(&self.free,cancelled)
+            crate::archive::recv_archive_credit(&self.free, cancelled)
         } else {
-            self.free.try_recv().map_err(|e|format!("ARCHIVE_PIN_RING_FATAL: {e}"))
+            self.free
+                .try_recv()
+                .map_err(|e| format!("ARCHIVE_PIN_RING_FATAL: {e}"))
         }
     }
     pub(crate) fn submit(&self, slot: Slot, depth: u64, rows: u32) -> Result<()> {
@@ -260,14 +322,23 @@ impl PinnedArchive {
     /// Rejected slots still own live D2H readers. Publish/abort the rank group
     /// before dropping them; the notification does not permit buffer reuse.
     pub(crate) fn submit_notifying(
-        &self, slot: Slot, depth: u64, rows: u32, on_failure: impl FnOnce(&str),
+        &self,
+        slot: Slot,
+        depth: u64,
+        rows: u32,
+        on_failure: impl FnOnce(&str),
     ) -> Result<()> {
-        if rows == 0 || rows > self.rows || rows as usize * (self.width + if self.state_only { 0 } else { 16 }) > slot.bytes {
+        if rows == 0
+            || rows > self.rows
+            || rows as usize * (self.width + if self.state_only { 0 } else { 16 }) > slot.bytes
+        {
             on_failure("ARCHIVE_SLOT_SHAPE");
             return Err("ARCHIVE_SLOT_SHAPE".into());
         }
         crate::archive::send_archive_message(
-            self.tx.as_ref(), Message::Records(slot, depth, rows), on_failure,
+            self.tx.as_ref(),
+            Message::Records(slot, depth, rows),
+            on_failure,
         )
     }
     fn send(&self, message: Message) -> Result<()> {
@@ -304,84 +375,153 @@ impl Drop for PinnedArchive {
 #[cfg(test)]
 mod worker_failure_tests {
     use super::*;
-    use std::{sync::{Arc, atomic::{AtomicU8, Ordering}}, time::{Duration, Instant}};
-    struct FaultExtent { write_fault: bool, sync_fault: bool }
+    use std::{
+        sync::{
+            atomic::{AtomicU8, Ordering},
+            Arc,
+        },
+        time::{Duration, Instant},
+    };
+    struct FaultExtent {
+        write_fault: bool,
+        sync_fault: bool,
+    }
     impl Extent for FaultExtent {
-        fn reserve(&mut self, _: u64) -> std::io::Result<()> { Ok(()) }
+        fn reserve(&mut self, _: u64) -> std::io::Result<()> {
+            Ok(())
+        }
         fn write_at(&mut self, offset: u64, data: &[u8]) -> std::io::Result<usize> {
             if self.write_fault && offset >= 48 {
                 Err(std::io::Error::other("INJECTED_ARCHIVE_WRITE"))
-            } else { Ok(data.len()) }
+            } else {
+                Ok(data.len())
+            }
         }
         fn sync(&mut self) -> std::io::Result<()> {
-            if self.sync_fault { Err(std::io::Error::other("INJECTED_ARCHIVE_SYNC")) }
-            else { Ok(()) }
+            if self.sync_fault {
+                Err(std::io::Error::other("INJECTED_ARCHIVE_SYNC"))
+            } else {
+                Ok(())
+            }
         }
     }
     fn archive(write_fault: bool, sync_fault: bool) -> (PinnedArchive, Arc<AtomicU8>) {
         assert_eq!(unsafe { cudaSetDevice(0) }, 0);
         let report = Arc::new(AtomicU8::new(0));
         let archive = PinnedArchive::new_with_failure_report(
-            FaultExtent { write_fault, sync_fault }, 4096, 4, [0; 32], 1, 2,
+            FaultExtent {
+                write_fault,
+                sync_fault,
+            },
+            4096,
+            4,
+            [0; 32],
+            1,
+            2,
             Some(report.clone()),
-        ).unwrap();
+        )
+        .unwrap();
         let slot = archive.acquire().unwrap();
-        unsafe { std::ptr::write_bytes(slot.ptr.cast::<u8>(), 0, slot.bytes); }
+        unsafe {
+            std::ptr::write_bytes(slot.ptr.cast::<u8>(), 0, slot.bytes);
+        }
         archive.submit(slot, 0, 1).unwrap();
         (archive, report)
     }
     #[test]
     fn pinned_slots_share_one_block_and_geometry_change_releases_it() {
-        assert_eq!(unsafe {cudaSetDevice(0)},0);
+        assert_eq!(unsafe { cudaSetDevice(0) }, 0);
         crate::session_cache::enable();
-        let archive=PinnedArchive::new(FaultExtent {write_fault:false,sync_fault:false},4096,4,[0;32],1,2).unwrap();
-        let first=archive.acquire().unwrap();
-        let second=archive.acquire().unwrap();
-        assert!(Arc::ptr_eq(&first.allocation,&second.allocation));
-        assert_eq!((second.ptr as usize).abs_diff(first.ptr as usize),first.bytes);
-        let allocation=Arc::downgrade(&first.allocation);
-        let bytes=first.bytes;
-        drop(first);drop(second);
-        archive.layer(0,0).unwrap();archive.finish().unwrap();
-        assert_eq!(crate::session_cache::pinned_count(bytes),2);
+        let archive = PinnedArchive::new(
+            FaultExtent {
+                write_fault: false,
+                sync_fault: false,
+            },
+            4096,
+            4,
+            [0; 32],
+            1,
+            2,
+        )
+        .unwrap();
+        let first = archive.acquire().unwrap();
+        let second = archive.acquire().unwrap();
+        assert!(Arc::ptr_eq(&first.allocation, &second.allocation));
+        assert_eq!(
+            (second.ptr as usize).abs_diff(first.ptr as usize),
+            first.bytes
+        );
+        let allocation = Arc::downgrade(&first.allocation);
+        let bytes = first.bytes;
+        drop(first);
+        drop(second);
+        archive.layer(0, 0).unwrap();
+        archive.finish().unwrap();
+        assert_eq!(crate::session_cache::pinned_count(bytes), 2);
         assert!(allocation.upgrade().is_some());
-        crate::session_cache::prepare_pinned(bytes,3);
-        assert_eq!(crate::session_cache::pinned_count(bytes),0);
+        crate::session_cache::prepare_pinned(bytes, 3);
+        assert_eq!(crate::session_cache::pinned_count(bytes), 0);
         assert!(allocation.upgrade().is_none());
     }
     #[test]
     fn exhausted_credits_activate_preallocated_reserve() {
-        assert_eq!(unsafe {cudaSetDevice(0)},0);
-        let mut archive=PinnedArchive::new(FaultExtent {write_fault:false,sync_fault:false},4096,4,[0;32],1,4).unwrap();
-        archive.wait_for_credit=false;
-        let reserve_a=archive.acquire().unwrap();
-        let reserve_b=archive.acquire().unwrap();
-        archive.reserve.borrow_mut().extend([reserve_a,reserve_b]);
-        archive.initial_slots=2;
-        let first=archive.acquire().unwrap();
-        let second=archive.acquire().unwrap();
-        assert_eq!(archive.ring_stats()["activated_slots"],2);
-        let third=archive.acquire().unwrap();
-        assert_eq!(archive.ring_stats()["activated_slots"],3);
-        let fourth=archive.acquire().unwrap();
-        assert_eq!(archive.ring_stats()["activated_slots"],4);
-        for slot in [&second,&third,&fourth] {assert!(Arc::ptr_eq(&first.allocation,&slot.allocation));}
+        assert_eq!(unsafe { cudaSetDevice(0) }, 0);
+        let mut archive = PinnedArchive::new(
+            FaultExtent {
+                write_fault: false,
+                sync_fault: false,
+            },
+            4096,
+            4,
+            [0; 32],
+            1,
+            4,
+        )
+        .unwrap();
+        archive.wait_for_credit = false;
+        let reserve_a = archive.acquire().unwrap();
+        let reserve_b = archive.acquire().unwrap();
+        archive.reserve.borrow_mut().extend([reserve_a, reserve_b]);
+        archive.initial_slots = 2;
+        let first = archive.acquire().unwrap();
+        let second = archive.acquire().unwrap();
+        assert_eq!(archive.ring_stats()["activated_slots"], 2);
+        let third = archive.acquire().unwrap();
+        assert_eq!(archive.ring_stats()["activated_slots"], 3);
+        let fourth = archive.acquire().unwrap();
+        assert_eq!(archive.ring_stats()["activated_slots"], 4);
+        for slot in [&second, &third, &fourth] {
+            assert!(Arc::ptr_eq(&first.allocation, &slot.allocation));
+        }
         assert!(archive.acquire().is_err());
-        archive.layer(0,0).unwrap();archive.finish().unwrap();
-        drop((first,second,third,fourth));
+        archive.layer(0, 0).unwrap();
+        archive.finish().unwrap();
+        drop((first, second, third, fourth));
     }
     #[test]
     fn fatal_credit_policy_does_not_wait_on_exhaustion() {
-        assert_eq!(unsafe {cudaSetDevice(0)},0);
-        let mut archive=PinnedArchive::new(FaultExtent {write_fault:false,sync_fault:false},4096,4,[0;32],1,2).unwrap();
-        archive.wait_for_credit=false;
-        let first=archive.acquire().unwrap();
-        let second=archive.acquire().unwrap();
-        let error=archive.acquire().err().unwrap();
+        assert_eq!(unsafe { cudaSetDevice(0) }, 0);
+        let mut archive = PinnedArchive::new(
+            FaultExtent {
+                write_fault: false,
+                sync_fault: false,
+            },
+            4096,
+            4,
+            [0; 32],
+            1,
+            2,
+        )
+        .unwrap();
+        archive.wait_for_credit = false;
+        let first = archive.acquire().unwrap();
+        let second = archive.acquire().unwrap();
+        let error = archive.acquire().err().unwrap();
         assert!(error.starts_with("ARCHIVE_PIN_RING_FATAL:"));
-        archive.layer(0,0).unwrap();
+        archive.layer(0, 0).unwrap();
         archive.finish().unwrap();
-        drop(first);drop(second);
+        drop(first);
+        drop(second);
     }
     #[test]
     fn occupied_pinned_slots_wait_for_writer_without_losing_readers() {
@@ -390,33 +530,55 @@ mod worker_failure_tests {
             release: std::sync::mpsc::Receiver<()>,
         }
         impl Extent for PausedExtent {
-            fn reserve(&mut self,_:u64)->std::io::Result<()> { Ok(()) }
-            fn write_at(&mut self,offset:u64,data:&[u8])->std::io::Result<usize> {
-                if offset>=48 {
-                    if let Some(entered)=self.entered.take() {
-                        entered.send(()).unwrap();self.release.recv().unwrap();
+            fn reserve(&mut self, _: u64) -> std::io::Result<()> {
+                Ok(())
+            }
+            fn write_at(&mut self, offset: u64, data: &[u8]) -> std::io::Result<usize> {
+                if offset >= 48 {
+                    if let Some(entered) = self.entered.take() {
+                        entered.send(()).unwrap();
+                        self.release.recv().unwrap();
                     }
                 }
                 Ok(data.len())
             }
-            fn sync(&mut self)->std::io::Result<()> { Ok(()) }
+            fn sync(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
         }
-        assert_eq!(unsafe {cudaSetDevice(0)},0);
-        let (notify,entered)=std::sync::mpsc::channel();
-        let (release,resume)=std::sync::mpsc::channel();
-        let mut archive=PinnedArchive::new(PausedExtent {
-            entered:Some(notify),release:resume},4096,4,[0;32],1,2).unwrap();
-        archive.wait_for_credit=true;
-        let first=archive.acquire().unwrap();
-        unsafe {std::ptr::write_bytes(first.ptr.cast::<u8>(),0,first.bytes);}
-        archive.submit(first,0,1).unwrap();entered.recv().unwrap();
-        let held=archive.acquire().unwrap();
-        let writer=std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(30));release.send(()).unwrap();
+        assert_eq!(unsafe { cudaSetDevice(0) }, 0);
+        let (notify, entered) = std::sync::mpsc::channel();
+        let (release, resume) = std::sync::mpsc::channel();
+        let mut archive = PinnedArchive::new(
+            PausedExtent {
+                entered: Some(notify),
+                release: resume,
+            },
+            4096,
+            4,
+            [0; 32],
+            1,
+            2,
+        )
+        .unwrap();
+        archive.wait_for_credit = true;
+        let first = archive.acquire().unwrap();
+        unsafe {
+            std::ptr::write_bytes(first.ptr.cast::<u8>(), 0, first.bytes);
+        }
+        archive.submit(first, 0, 1).unwrap();
+        entered.recv().unwrap();
+        let held = archive.acquire().unwrap();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            release.send(()).unwrap();
         });
-        let recycled=archive.acquire().unwrap();writer.join().unwrap();
-        archive.layer(0,1).unwrap();archive.finish().unwrap();
-        drop(held);drop(recycled);
+        let recycled = archive.acquire().unwrap();
+        writer.join().unwrap();
+        archive.layer(0, 1).unwrap();
+        archive.finish().unwrap();
+        drop(held);
+        drop(recycled);
     }
     #[test]
     fn write_failure_is_published_without_a_producer_poll() {
@@ -426,14 +588,23 @@ mod worker_failure_tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         let published = report.load(Ordering::Acquire);
-        assert!(archive.finish().unwrap_err().contains("INJECTED_ARCHIVE_WRITE"));
-        assert_eq!(published, 2, "worker failure was not published before finish");
+        assert!(archive
+            .finish()
+            .unwrap_err()
+            .contains("INJECTED_ARCHIVE_WRITE"));
+        assert_eq!(
+            published, 2,
+            "worker failure was not published before finish"
+        );
     }
     #[test]
     fn final_sync_failure_is_published_and_never_returns_complete() {
         let (archive, report) = archive(false, true);
         archive.layer(0, 1).unwrap();
-        assert!(archive.finish().unwrap_err().contains("INJECTED_ARCHIVE_SYNC"));
+        assert!(archive
+            .finish()
+            .unwrap_err()
+            .contains("INJECTED_ARCHIVE_SYNC"));
         assert_eq!(report.load(Ordering::Acquire), 2);
     }
     #[test]

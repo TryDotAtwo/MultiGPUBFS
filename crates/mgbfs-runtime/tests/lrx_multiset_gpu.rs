@@ -20,14 +20,20 @@ fn lrx_multiset_two_rank_cuco_full_state_oracle() {
 #[test]
 #[ignore = "requires two P2P/LSA GPUs and MGBFS_CUDA_GRAPH_BATCHES=32; full windows and all states"]
 fn lrx_multiset_two_rank_graph_windows_full_state_oracle() {
-    assert_eq!(std::env::var("MGBFS_CUDA_GRAPH_BATCHES").as_deref(), Ok("32"));
+    assert_eq!(
+        std::env::var("MGBFS_CUDA_GRAPH_BATCHES").as_deref(),
+        Ok("32")
+    );
     for (n, r) in [(7, 1), (8, 4)] {
         for prededup in [false, true] {
             for reversed in [false, true] {
                 let mut expected = LrxMultiset::new(n, r).unwrap().exact_layers(8192).unwrap();
                 let expected_depths = expected.len();
-                let mut id = [0u8;128];
-                assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+                let mut id = [0u8; 128];
+                assert_eq!(
+                    unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
+                    0
+                );
                 let workers: Vec<_> = (0..2).map(|rank| std::thread::spawn(move || {
                     std::panic::catch_unwind(|| {
                         let cfg = DistributedConfig {
@@ -62,15 +68,24 @@ fn lrx_multiset_two_rank_graph_windows_full_state_oracle() {
                         layers
                     }).unwrap_or_else(|_| std::process::abort())
                 })).collect();
-                let mut actual = vec![Vec::new();expected.len()];
+                let mut actual = vec![Vec::new(); expected.len()];
                 for worker in workers {
                     let local = worker.join().unwrap();
-                    assert_eq!(local.len(),actual.len());
-                    for (dst,src) in actual.iter_mut().zip(local) { dst.extend(src); }
+                    assert_eq!(local.len(), actual.len());
+                    for (dst, src) in actual.iter_mut().zip(local) {
+                        dst.extend(src);
+                    }
                 }
-                for layer in &mut actual { layer.sort(); }
-                for layer in &mut expected { layer.sort(); }
-                assert_eq!(actual,expected,"graph window n={n} r={r} prededup={prededup} reversed={reversed}");
+                for layer in &mut actual {
+                    layer.sort();
+                }
+                for layer in &mut expected {
+                    layer.sort();
+                }
+                assert_eq!(
+                    actual, expected,
+                    "graph window n={n} r={r} prededup={prededup} reversed={reversed}"
+                );
             }
         }
     }
@@ -79,36 +94,72 @@ fn lrx_multiset_two_rank_graph_windows_full_state_oracle() {
 fn multiset_oracle(worlds: &[u32], include_rank: bool) {
     for &world in worlds {
         for n in [5, 7] {
-            let mut owners = vec![ReferenceOwner::Native(OwnerBackend::CubSortMerge), ReferenceOwner::CucoIndexed];
-            if include_rank { owners.push(ReferenceOwner::CucoRank); }
+            let mut owners = vec![
+                ReferenceOwner::Native(OwnerBackend::CubSortMerge),
+                ReferenceOwner::CucoIndexed,
+            ];
+            if include_rank {
+                owners.push(ReferenceOwner::CucoRank);
+            }
             for owner in owners {
                 for prededup in [false, true] {
-                    let mut expected = LrxMultiset::new(n,4).unwrap().exact_layers(256).unwrap();
-                    let mut id = [0u8;128];
-                    assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },0);
-                    let workers: Vec<_> = (0..world).map(|rank| std::thread::spawn(move || {
-                        std::panic::catch_unwind(|| {
-                            let graph = LrxMultiset::new(n,4).unwrap();
-                            let cfg = DistributedConfig {
-                                route_banks: 2, epoch_window: 2, state_descriptor_capacity: 512,
-                                rank, world, logical_owner_to_rank: if world == 1 { vec![0, 0] } else { (0..world).rev().collect() },
-                                transport: mgbfs_core::config::ReferenceTransport::HostSizedNccl,
-                                batch: 2, layer_capacity: 256, state_ring_capacity: 512,
-                                buckets: world*4, shards: world*2, job_buckets: 2,
-                                bucket_capacity: 256, prededup, generation_variant: 5,
-                                untouched_vram_reserve: 1<<30,
-                            };
-                            let pool = matches!(owner, ReferenceOwner::CucoIndexed | ReferenceOwner::CucoRank).then_some(64<<20);
-                            let mut bfs = DistributedNativeBfs::new_lrx_multiset_reference(
-                                &graph,[7;16],id,cfg,owner,pool).unwrap();
-                            let mut layers = Vec::new();
-                            loop {
-                                layers.push(bfs.snapshot().unwrap());
-                                if !bfs.advance().unwrap() { break; }
-                            }
-                            layers
-                        }).unwrap_or_else(|_| std::process::abort())
-                    })).collect();
+                    let mut expected = LrxMultiset::new(n, 4).unwrap().exact_layers(256).unwrap();
+                    let mut id = [0u8; 128];
+                    assert_eq!(
+                        unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
+                        0
+                    );
+                    let workers: Vec<_> = (0..world)
+                        .map(|rank| {
+                            std::thread::spawn(move || {
+                                std::panic::catch_unwind(|| {
+                                    let graph = LrxMultiset::new(n, 4).unwrap();
+                                    let cfg = DistributedConfig {
+                                        route_banks: 2,
+                                        epoch_window: 2,
+                                        state_descriptor_capacity: 512,
+                                        rank,
+                                        world,
+                                        logical_owner_to_rank: if world == 1 {
+                                            vec![0, 0]
+                                        } else {
+                                            (0..world).rev().collect()
+                                        },
+                                        transport:
+                                            mgbfs_core::config::ReferenceTransport::HostSizedNccl,
+                                        batch: 2,
+                                        layer_capacity: 256,
+                                        state_ring_capacity: 512,
+                                        buckets: world * 4,
+                                        shards: world * 2,
+                                        job_buckets: 2,
+                                        bucket_capacity: 256,
+                                        prededup,
+                                        generation_variant: 5,
+                                        untouched_vram_reserve: 1 << 30,
+                                    };
+                                    let pool = matches!(
+                                        owner,
+                                        ReferenceOwner::CucoIndexed | ReferenceOwner::CucoRank
+                                    )
+                                    .then_some(64 << 20);
+                                    let mut bfs = DistributedNativeBfs::new_lrx_multiset_reference(
+                                        &graph, [7; 16], id, cfg, owner, pool,
+                                    )
+                                    .unwrap();
+                                    let mut layers = Vec::new();
+                                    loop {
+                                        layers.push(bfs.snapshot().unwrap());
+                                        if !bfs.advance().unwrap() {
+                                            break;
+                                        }
+                                    }
+                                    layers
+                                })
+                                .unwrap_or_else(|_| std::process::abort())
+                            })
+                        })
+                        .collect();
                     let mut actual = vec![Vec::new(); expected.len()];
                     for worker in workers {
                         let local = worker.join().unwrap();

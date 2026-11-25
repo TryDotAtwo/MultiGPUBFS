@@ -337,7 +337,9 @@ impl OwnerBatch<'_> {
                         let device = if device_slot == 0 {
                             *primary
                         } else {
-                            tile.second_device.as_ref().ok_or("NATIVE_WINDOW_DEVICE_SLOT")?
+                            tile.second_device
+                                .as_ref()
+                                .ok_or("NATIVE_WINDOW_DEVICE_SLOT")?
                         };
                         tile.readback.wait_for_scratch(stream, device_slot)?;
                         crate::generic_native::checked!(
@@ -357,13 +359,26 @@ impl OwnerBatch<'_> {
                         )?;
                         // The copy stream reads tile-local status, so the next
                         // owner can update the shared error word before D2H ends.
-                        let error_snapshot = device.at::<u32>(tile.readback.rows * size_of::<WindowEdge>());
+                        let error_snapshot =
+                            device.at::<u32>(tile.readback.rows * size_of::<WindowEdge>());
                         crate::generic_native::checked!(cudaMemcpyAsync, unsafe {
-                            cudaMemcpyAsync(error_snapshot.cast(), owner.error.cast(), size_of::<u32>(), 3, stream)
+                            cudaMemcpyAsync(
+                                error_snapshot.cast(),
+                                owner.error.cast(),
+                                size_of::<u32>(),
+                                3,
+                                stream,
+                            )
                         })?;
                         if let Err(error) = tile.readback.enqueue(
-                            lineage, device, device_slot, stream, rows as usize, self.plan.capacity,
-                            b.generators, WindowSenders::Uniform(run.source_rank),
+                            lineage,
+                            device,
+                            device_slot,
+                            stream,
+                            rows as usize,
+                            self.plan.capacity,
+                            b.generators,
+                            WindowSenders::Uniform(run.source_rank),
                             Some(error_snapshot),
                             || {
                                 (self.checkpoint)()?;

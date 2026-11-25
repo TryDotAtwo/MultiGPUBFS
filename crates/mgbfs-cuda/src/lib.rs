@@ -1,8 +1,8 @@
 //! Raw C ABI. CUDA is opt-in; there is no CPU implementation of these calls.
 pub mod allocation;
-pub mod shard_ab;
 pub mod library_owner;
 pub mod native_owner;
+pub mod shard_ab;
 #[cfg(any(feature = "cuda", feature = "library-owner"))]
 pub mod ffi {
     pub use crate::allocation::{
@@ -595,11 +595,58 @@ pub mod ffi {
             error: *mut c_char,
             error_capacity: usize,
         ) -> i32;
-        pub fn mgbfs_nccl_all_reduce_sum_u64(comm:*mut c_void,send:*const u64,recv:*mut u64,stream:*mut c_void)->i32;
-        pub fn mgbfs_nccl_exchange_triplets(comm:*mut c_void,rank:u32,world:u32,counts:*const c_void,count_bytes:u64,records:*const c_void,record_bytes:u64,states:*const c_void,state_bytes:u64,recv_counts:*mut c_void,recv_records:*mut c_void,recv_states:*mut c_void,stream:*mut c_void)->i32;
-        pub fn mgbfs_nccl_send_recv_triplet(comm:*mut c_void,count:*const c_void,count_bytes:u64,metadata:*const c_void,metadata_bytes:u64,states:*const c_void,state_bytes:u64,peer:u32,recv_count:*mut c_void,recv_metadata:*mut c_void,recv_states:*mut c_void,stream:*mut c_void)->i32;
-        pub fn mgbfs_nccl_all_reduce_sum_u32(comm: *mut c_void, send: *const u32, recv: *mut u32, stream: *mut c_void) -> i32;
-        pub fn mgbfs_route_run_sharded(plan: *mut c_void, hashes: *const c_void, refs: *const u64, output: *mut c_void, outrefs: *mut u64, output_count: *mut u32, count: u32, partitions: u32, stream: *mut c_void) -> i32;
+        pub fn mgbfs_nccl_all_reduce_sum_u64(
+            comm: *mut c_void,
+            send: *const u64,
+            recv: *mut u64,
+            stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_nccl_exchange_triplets(
+            comm: *mut c_void,
+            rank: u32,
+            world: u32,
+            counts: *const c_void,
+            count_bytes: u64,
+            records: *const c_void,
+            record_bytes: u64,
+            states: *const c_void,
+            state_bytes: u64,
+            recv_counts: *mut c_void,
+            recv_records: *mut c_void,
+            recv_states: *mut c_void,
+            stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_nccl_send_recv_triplet(
+            comm: *mut c_void,
+            count: *const c_void,
+            count_bytes: u64,
+            metadata: *const c_void,
+            metadata_bytes: u64,
+            states: *const c_void,
+            state_bytes: u64,
+            peer: u32,
+            recv_count: *mut c_void,
+            recv_metadata: *mut c_void,
+            recv_states: *mut c_void,
+            stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_nccl_all_reduce_sum_u32(
+            comm: *mut c_void,
+            send: *const u32,
+            recv: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_route_run_sharded(
+            plan: *mut c_void,
+            hashes: *const c_void,
+            refs: *const u64,
+            output: *mut c_void,
+            outrefs: *mut u64,
+            output_count: *mut u32,
+            count: u32,
+            partitions: u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_route_run(
             plan: *mut c_void,
             hashes: *const c_void,
@@ -661,14 +708,56 @@ pub mod ffi {
             stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_generate_destroy(plan: *mut c_void);
-        pub fn mgbfs_compact_map_query(n:u32,moves:u32,capacity:u32,bytes:*mut u64)->i32;
-        pub fn mgbfs_compact_map_create(n:u32,moves:u32,capacity:u32,permutation:*const u8,out:*mut *mut c_void,error:*mut c_char,error_capacity:usize)->i32;
-        pub fn mgbfs_lossless_hash_create(n:u32,capacity:u32,bits:u32,out:*mut *mut c_void,error:*mut c_char,error_capacity:usize)->i32;
-        pub fn mgbfs_lossless_compact_hash_create(n:u32,moves:u32,capacity:u32,permutation:*const u8,bits:u32,move_major:u32,out:*mut *mut c_void,error:*mut c_char,error_capacity:usize)->i32;
-        pub fn mgbfs_compact_hash_query(n:u32,moves:u32,capacity:u32,bytes:*mut u64)->i32;
-        pub fn mgbfs_compact_hash_create(n:u32,moves:u32,capacity:u32,permutation:*const u8,limbs:*const u8,offsets:*const u32,move_major:u32,out:*mut *mut c_void,error:*mut c_char,error_capacity:usize)->i32;
-        pub fn mgbfs_compact_hash_run(plan:*mut c_void,parents:*const u8,output:*mut u32,count:u32,stream:*mut c_void)->i32;
-        pub fn mgbfs_compact_hash_destroy(plan:*mut c_void);
+        pub fn mgbfs_compact_map_query(n: u32, moves: u32, capacity: u32, bytes: *mut u64) -> i32;
+        pub fn mgbfs_compact_map_create(
+            n: u32,
+            moves: u32,
+            capacity: u32,
+            permutation: *const u8,
+            out: *mut *mut c_void,
+            error: *mut c_char,
+            error_capacity: usize,
+        ) -> i32;
+        pub fn mgbfs_lossless_hash_create(
+            n: u32,
+            capacity: u32,
+            bits: u32,
+            out: *mut *mut c_void,
+            error: *mut c_char,
+            error_capacity: usize,
+        ) -> i32;
+        pub fn mgbfs_lossless_compact_hash_create(
+            n: u32,
+            moves: u32,
+            capacity: u32,
+            permutation: *const u8,
+            bits: u32,
+            move_major: u32,
+            out: *mut *mut c_void,
+            error: *mut c_char,
+            error_capacity: usize,
+        ) -> i32;
+        pub fn mgbfs_compact_hash_query(n: u32, moves: u32, capacity: u32, bytes: *mut u64) -> i32;
+        pub fn mgbfs_compact_hash_create(
+            n: u32,
+            moves: u32,
+            capacity: u32,
+            permutation: *const u8,
+            limbs: *const u8,
+            offsets: *const u32,
+            move_major: u32,
+            out: *mut *mut c_void,
+            error: *mut c_char,
+            error_capacity: usize,
+        ) -> i32;
+        pub fn mgbfs_compact_hash_run(
+            plan: *mut c_void,
+            parents: *const u8,
+            output: *mut u32,
+            count: u32,
+            stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_compact_hash_destroy(plan: *mut c_void);
         pub fn mgbfs_hash_create(
             bytes: u32,
             capacity: u32,

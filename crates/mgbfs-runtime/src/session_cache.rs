@@ -1,49 +1,99 @@
 //! Only resident-session jobs use this rank-local, shape-bounded cache.
-use std::{cell::RefCell, ffi::c_void};
 use mgbfs_cuda::ffi::*;
+use std::{cell::RefCell, ffi::c_void};
 struct Cache {
     enabled: bool,
     shape: String,
-    generic_required:Option<std::collections::BTreeMap<usize,usize>>,
-    generic_manifest:Vec<usize>,
+    generic_required: Option<std::collections::BTreeMap<usize, usize>>,
+    generic_manifest: Vec<usize>,
     buffers: Vec<(*mut c_void, usize)>,
-    pinned: Vec<(*mut c_void, usize, *mut c_void, std::sync::Arc<crate::pinned_archive::HostBlock>)>,
+    pinned: Vec<(
+        *mut c_void,
+        usize,
+        *mut c_void,
+        std::sync::Arc<crate::pinned_archive::HostBlock>,
+    )>,
     comm: *mut c_void,
-    streams:Vec<(*mut c_void,i32)>,events:Vec<(*mut c_void,i32)>,stream_hits:u64,event_hits:u64,
+    streams: Vec<(*mut c_void, i32)>,
+    events: Vec<(*mut c_void, i32)>,
+    stream_hits: u64,
+    event_hits: u64,
     buffer_hits: u64,
     comm_hits: u64,
     pool_hits: u64,
     permit_comm: bool,
     segmented_certified: bool,
-    nccl_id: Option<[u8;128]>,
+    nccl_id: Option<[u8; 128]>,
     #[cfg(feature = "library-owner")]
     pool: Option<(*mut c_void, u64)>,
 }
 impl Default for Cache {
     fn default() -> Self {
-        Self { enabled:false, shape:String::new(), generic_required:None,generic_manifest:Vec::new(),buffers:Vec::new(), pinned:Vec::new(),
-            comm:std::ptr::null_mut(),streams:Vec::new(),events:Vec::new(),stream_hits:0,event_hits:0, buffer_hits:0,comm_hits:0,pool_hits:0,permit_comm:false,segmented_certified:false,nccl_id:None,
+        Self {
+            enabled: false,
+            shape: String::new(),
+            generic_required: None,
+            generic_manifest: Vec::new(),
+            buffers: Vec::new(),
+            pinned: Vec::new(),
+            comm: std::ptr::null_mut(),
+            streams: Vec::new(),
+            events: Vec::new(),
+            stream_hits: 0,
+            event_hits: 0,
+            buffer_hits: 0,
+            comm_hits: 0,
+            pool_hits: 0,
+            permit_comm: false,
+            segmented_certified: false,
+            nccl_id: None,
             #[cfg(feature = "library-owner")]
-            pool:None,
+            pool: None,
         }
     }
 }
 impl Cache {
     fn release_storage(&mut self) {
-        for (ptr, _) in self.buffers.drain(..) { if !crate::generic_pool::release(ptr){unsafe { cudaFree(ptr); }} }
+        for (ptr, _) in self.buffers.drain(..) {
+            if !crate::generic_pool::release(ptr) {
+                unsafe {
+                    cudaFree(ptr);
+                }
+            }
+        }
         #[cfg(feature = "library-owner")]
         if let Some((ptr, _)) = self.pool.take() {
-            unsafe { mgbfs_cuda::library_owner::mgbfs_library_pool_destroy_v1(ptr); }
+            unsafe {
+                mgbfs_cuda::library_owner::mgbfs_library_pool_destroy_v1(ptr);
+            }
         }
     }
 }
 impl Drop for Cache {
     fn drop(&mut self) {
         self.release_storage();
-        for (ptr,device) in self.streams.drain(..){unsafe{mgbfs_cuda::native_owner::cudaSetDevice(device);cudaStreamDestroy(ptr);}}
-        for (ptr,device) in self.events.drain(..){unsafe{mgbfs_cuda::native_owner::cudaSetDevice(device);cudaEventDestroy(ptr);}}
-        for (_, _, event, _) in self.pinned.drain(..) { unsafe { cudaEventDestroy(event); } }
-        if !self.comm.is_null() { unsafe { mgbfs_nccl_destroy(self.comm); } }
+        for (ptr, device) in self.streams.drain(..) {
+            unsafe {
+                mgbfs_cuda::native_owner::cudaSetDevice(device);
+                cudaStreamDestroy(ptr);
+            }
+        }
+        for (ptr, device) in self.events.drain(..) {
+            unsafe {
+                mgbfs_cuda::native_owner::cudaSetDevice(device);
+                cudaEventDestroy(ptr);
+            }
+        }
+        for (_, _, event, _) in self.pinned.drain(..) {
+            unsafe {
+                cudaEventDestroy(event);
+            }
+        }
+        if !self.comm.is_null() {
+            unsafe {
+                mgbfs_nccl_destroy(self.comm);
+            }
+        }
     }
 }
 pub fn prepare_pinned(bytes: usize, slots: usize) {
@@ -52,126 +102,317 @@ pub fn prepare_pinned(bytes: usize, slots: usize) {
         // A subset of slots still retains its entire shared allocation. Only
         // reuse an exact geometry; otherwise release the whole pool so the
         // advertised bounded host budget is also the physical allocation.
-        if c.pinned.len()!=slots || c.pinned.iter().any(|(_,n,_,_)|*n!=bytes) {
-            for (_,_,event,_) in c.pinned.drain(..) {unsafe {cudaEventDestroy(event);}}
+        if c.pinned.len() != slots || c.pinned.iter().any(|(_, n, _, _)| *n != bytes) {
+            for (_, _, event, _) in c.pinned.drain(..) {
+                unsafe {
+                    cudaEventDestroy(event);
+                }
+            }
             return;
         }
         let mut keep = Vec::new();
         for (ptr, n, event, allocation) in c.pinned.drain(..) {
-            if n == bytes && keep.len() < slots { keep.push((ptr,n,event,allocation)); }
-            else { unsafe { cudaEventDestroy(event); } }
+            if n == bytes && keep.len() < slots {
+                keep.push((ptr, n, event, allocation));
+            } else {
+                unsafe {
+                    cudaEventDestroy(event);
+                }
+            }
         }
         c.pinned = keep;
     });
 }
 #[cfg(test)]
 pub fn pinned_count(bytes: usize) -> usize {
-    CACHE.with(|c|c.borrow().pinned.iter().filter(|(_,n,_,_)|*n==bytes).count())
-}
-pub fn pinned_take(bytes: usize) -> Option<(*mut c_void,*mut c_void,std::sync::Arc<crate::pinned_archive::HostBlock>)> {
     CACHE.with(|c| {
-        let mut c=c.borrow_mut();
-        let i=c.pinned.iter().position(|(_,n,_,_)| *n==bytes)?;
-        let (ptr,_,event,allocation)=c.pinned.swap_remove(i);Some((ptr,event,allocation))
+        c.borrow()
+            .pinned
+            .iter()
+            .filter(|(_, n, _, _)| *n == bytes)
+            .count()
     })
 }
-pub fn pinned_put(ptr: *mut c_void, bytes: usize, event: *mut c_void, allocation: std::sync::Arc<crate::pinned_archive::HostBlock>) -> bool {
+pub fn pinned_take(
+    bytes: usize,
+) -> Option<(
+    *mut c_void,
+    *mut c_void,
+    std::sync::Arc<crate::pinned_archive::HostBlock>,
+)> {
     CACHE.with(|c| {
-        let mut c=c.borrow_mut();if !c.enabled { return false; }
-        c.pinned.push((ptr,bytes,event,allocation));true
+        let mut c = c.borrow_mut();
+        let i = c.pinned.iter().position(|(_, n, _, _)| *n == bytes)?;
+        let (ptr, _, event, allocation) = c.pinned.swap_remove(i);
+        Some((ptr, event, allocation))
+    })
+}
+pub fn pinned_put(
+    ptr: *mut c_void,
+    bytes: usize,
+    event: *mut c_void,
+    allocation: std::sync::Arc<crate::pinned_archive::HostBlock>,
+) -> bool {
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if !c.enabled {
+            return false;
+        }
+        c.pinned.push((ptr, bytes, event, allocation));
+        true
     })
 }
 thread_local! { static CACHE: RefCell<Cache> = RefCell::new(Cache::default()); }
-pub fn enable() { CACHE.with(|c| c.borrow_mut().enabled = true); }
-pub fn enabled() -> bool { CACHE.with(|c| c.borrow().enabled) }
-pub fn warmed_communicator() -> bool { CACHE.with(|c| {let c=c.borrow();c.enabled && !c.comm.is_null() && c.permit_comm}) }
-pub fn permit_comm(value: bool) { CACHE.with(|c| {
-    let mut c=c.borrow_mut();c.permit_comm=value;if !value { c.nccl_id=None; c.segmented_certified=false; }
-}); }
+pub fn enable() {
+    CACHE.with(|c| c.borrow_mut().enabled = true);
+}
+pub fn enabled() -> bool {
+    CACHE.with(|c| c.borrow().enabled)
+}
+pub fn warmed_communicator() -> bool {
+    CACHE.with(|c| {
+        let c = c.borrow();
+        c.enabled && !c.comm.is_null() && c.permit_comm
+    })
+}
+pub fn permit_comm(value: bool) {
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        c.permit_comm = value;
+        if !value {
+            c.nccl_id = None;
+            c.segmented_certified = false;
+        }
+    });
+}
 /// Advertise the exact previously agreed NCCL generation without taking it.
 /// A parked communicator produced by a non-certified path is rejected: mixed
 /// warm/cold ranks must never enter NCCL under different assumptions.
 pub fn segmented_comm_identity() -> mgbfs_core::Result<serde_json::Value> {
-    use sha2::{Digest,Sha256};
+    use sha2::{Digest, Sha256};
     CACHE.with(|cell| {
-        let c=cell.borrow();
-        if c.comm.is_null() { return Ok(serde_json::json!({"mode":"cold"})); }
+        let c = cell.borrow();
+        if c.comm.is_null() {
+            return Ok(serde_json::json!({"mode":"cold"}));
+        }
         if !c.enabled || !c.permit_comm || !c.segmented_certified {
             return Err("SEGMENTED_UNCERTIFIED_PARKED_COMM".into());
         }
-        let id=c.nccl_id.ok_or("SEGMENTED_PARKED_COMM_ID_MISSING")?;
-        let generation=Sha256::digest(id).iter().map(|v|format!("{v:02x}")).collect::<String>();
+        let id = c.nccl_id.ok_or("SEGMENTED_PARKED_COMM_ID_MISSING")?;
+        let generation = Sha256::digest(id)
+            .iter()
+            .map(|v| format!("{v:02x}"))
+            .collect::<String>();
         Ok(serde_json::json!({"mode":"warm","generation":generation}))
     })
 }
-pub fn certify_segmented_comm() { CACHE.with(|cell|cell.borrow_mut().segmented_certified=true); }
+pub fn certify_segmented_comm() {
+    CACHE.with(|cell| cell.borrow_mut().segmented_certified = true);
+}
 /// Fault injection for physical tests; unavailable without both private gates.
 pub fn test_drop_parked_segmented_comm() -> mgbfs_core::Result<()> {
- if std::env::var("MGBFS_SEGMENT_TEST_BATCH").as_deref()!=Ok("1") || std::env::var("MGBFS_SEGMENT_TEST_HOST_FAIL").as_deref()!=Ok("drop-comm") {return Ok(())}
- if std::env::var("MGBFS_SEGMENT_TEST_FAIL_RANK").ok().as_deref()!=std::env::var("RANK").ok().as_deref(){return Ok(())}
- let ptr=CACHE.with(|cell|{let mut c=cell.borrow_mut();c.permit_comm=false;c.segmented_certified=false;c.nccl_id=None;std::mem::replace(&mut c.comm,std::ptr::null_mut())});
- if ptr.is_null(){return Err("SEGMENTED_TEST_NO_PARKED_COMM".into())}
- let status=unsafe{mgbfs_nccl_abort(ptr)};eprintln!("SEGMENTED_TEST_DROPPED_COMM rank={} abort={status}",std::env::var("RANK").unwrap_or_default());
- unsafe{mgbfs_nccl_destroy(ptr);}
- if status!=0{return Err(format!("SEGMENTED_TEST_DROP_COMM_ABORT_{status}"))}Ok(())
+    if std::env::var("MGBFS_SEGMENT_TEST_BATCH").as_deref() != Ok("1")
+        || std::env::var("MGBFS_SEGMENT_TEST_HOST_FAIL").as_deref() != Ok("drop-comm")
+    {
+        return Ok(());
+    }
+    if std::env::var("MGBFS_SEGMENT_TEST_FAIL_RANK")
+        .ok()
+        .as_deref()
+        != std::env::var("RANK").ok().as_deref()
+    {
+        return Ok(());
+    }
+    let ptr = CACHE.with(|cell| {
+        let mut c = cell.borrow_mut();
+        c.permit_comm = false;
+        c.segmented_certified = false;
+        c.nccl_id = None;
+        std::mem::replace(&mut c.comm, std::ptr::null_mut())
+    });
+    if ptr.is_null() {
+        return Err("SEGMENTED_TEST_NO_PARKED_COMM".into());
+    }
+    let status = unsafe { mgbfs_nccl_abort(ptr) };
+    eprintln!(
+        "SEGMENTED_TEST_DROPPED_COMM rank={} abort={status}",
+        std::env::var("RANK").unwrap_or_default()
+    );
+    unsafe {
+        mgbfs_nccl_destroy(ptr);
+    }
+    if status != 0 {
+        return Err(format!("SEGMENTED_TEST_DROP_COMM_ABORT_{status}"));
+    }
+    Ok(())
 }
-pub fn bootstrap_id(create: impl FnOnce() -> mgbfs_core::Result<[u8;128]>) -> mgbfs_core::Result<[u8;128]> {
+pub fn bootstrap_id(
+    create: impl FnOnce() -> mgbfs_core::Result<[u8; 128]>,
+) -> mgbfs_core::Result<[u8; 128]> {
     CACHE.with(|c| {
-        let mut c=c.borrow_mut();
+        let mut c = c.borrow_mut();
         // A unique ID belongs to the parked communicator, not the rank process.
         // Query-only LSA construction destroys its communicator on unwind.
-        if c.enabled && !c.comm.is_null() { if let Some(id)=c.nccl_id { return Ok(id); } }
-        let id=create()?;if c.enabled { c.nccl_id=Some(id); }Ok(id)
+        if c.enabled && !c.comm.is_null() {
+            if let Some(id) = c.nccl_id {
+                return Ok(id);
+            }
+        }
+        let id = create()?;
+        if c.enabled {
+            c.nccl_id = Some(id);
+        }
+        Ok(id)
     })
 }
 pub fn begin(shape: String) {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        c.generic_required=None;c.generic_manifest.clear();c.buffer_hits = 0;c.comm_hits = 0;c.pool_hits = 0;c.stream_hits=0;c.event_hits=0;
-        c.permit_comm = false;c.segmented_certified=false;
-        if c.enabled && c.shape != shape { c.release_storage(); c.shape = shape; }
+        c.generic_required = None;
+        c.generic_manifest.clear();
+        c.buffer_hits = 0;
+        c.comm_hits = 0;
+        c.pool_hits = 0;
+        c.stream_hits = 0;
+        c.event_hits = 0;
+        c.permit_comm = false;
+        c.segmented_certified = false;
+        if c.enabled && c.shape != shape {
+            c.release_storage();
+            c.shape = shape;
+        }
     });
 }
 /// Retain only exact raw allocation extents required by the incoming job.
 /// All prior buffers are idle after the all-rank quiescence gate; no content
 /// or graph-specific interpretation is reused. Multiplicities bound storage.
-pub fn begin_generic(shape:String,required:&[usize])->mgbfs_core::Result<()> {
- CACHE.with(|cell| {
-  let mut c=cell.borrow_mut();
-  if std::env::var("MGBFS_REQUIRE_OWNED_RAW").as_deref()==Ok("1") {
-   let mut parked=c.buffers.iter().map(|(_,n)|*n).collect::<Vec<_>>();parked.sort_unstable();let mut incoming=required.iter().map(|&n|n.max(1)).collect::<Vec<_>>();incoming.sort_unstable();
-   if !c.enabled||!c.permit_comm||c.comm.is_null()||parked!=incoming{return Err("GENERIC_OWNED_RESOURCE_PROOF_CHANGED".into());}
-  }
-  if !c.shape.starts_with("generic:") {c.release_storage();}
-  else {
-   let mut need=std::collections::BTreeMap::<usize,usize>::new();
-   for &n in required {*need.entry(n.max(1)).or_default()+=1;}
-   let mut keep=Vec::new();
-   for (ptr,n) in c.buffers.drain(..) {
-    if let Some(count)=need.get_mut(&n).filter(|count|**count>0) {*count-=1;keep.push((ptr,n));}
-    else if !crate::generic_pool::release(ptr){unsafe{cudaFree(ptr);}}
-   }
-   c.buffers=keep;
-  }
-  let mut required_counts=std::collections::BTreeMap::new();for &n in required{*required_counts.entry(n.max(1)).or_insert(0usize)+=1;}c.generic_required=Some(required_counts);c.generic_manifest=required.iter().map(|&n|n.max(1)).collect();c.generic_manifest.sort_unstable();
-  c.shape=format!("generic:{shape}");c.buffer_hits=0;c.comm_hits=0;c.pool_hits=0;c.stream_hits=0;c.event_hits=0;c.permit_comm=false;c.segmented_certified=false;
-  Ok(())
- })
+pub fn begin_generic(shape: String, required: &[usize]) -> mgbfs_core::Result<()> {
+    CACHE.with(|cell| {
+        let mut c = cell.borrow_mut();
+        if std::env::var("MGBFS_REQUIRE_OWNED_RAW").as_deref() == Ok("1") {
+            let mut parked = c.buffers.iter().map(|(_, n)| *n).collect::<Vec<_>>();
+            parked.sort_unstable();
+            let mut incoming = required.iter().map(|&n| n.max(1)).collect::<Vec<_>>();
+            incoming.sort_unstable();
+            if !c.enabled || !c.permit_comm || c.comm.is_null() || parked != incoming {
+                return Err("GENERIC_OWNED_RESOURCE_PROOF_CHANGED".into());
+            }
+        }
+        if !c.shape.starts_with("generic:") {
+            c.release_storage();
+        } else {
+            let mut need = std::collections::BTreeMap::<usize, usize>::new();
+            for &n in required {
+                *need.entry(n.max(1)).or_default() += 1;
+            }
+            let mut keep = Vec::new();
+            for (ptr, n) in c.buffers.drain(..) {
+                if let Some(count) = need.get_mut(&n).filter(|count| **count > 0) {
+                    *count -= 1;
+                    keep.push((ptr, n));
+                } else if !crate::generic_pool::release(ptr) {
+                    unsafe {
+                        cudaFree(ptr);
+                    }
+                }
+            }
+            c.buffers = keep;
+        }
+        let mut required_counts = std::collections::BTreeMap::new();
+        for &n in required {
+            *required_counts.entry(n.max(1)).or_insert(0usize) += 1;
+        }
+        c.generic_required = Some(required_counts);
+        c.generic_manifest = required.iter().map(|&n| n.max(1)).collect();
+        c.generic_manifest.sort_unstable();
+        c.shape = format!("generic:{shape}");
+        c.buffer_hits = 0;
+        c.comm_hits = 0;
+        c.pool_hits = 0;
+        c.stream_hits = 0;
+        c.event_hits = 0;
+        c.permit_comm = false;
+        c.segmented_certified = false;
+        Ok(())
+    })
 }
-pub fn generic_buffer_request(bytes:usize)->mgbfs_core::Result<()> {
- CACHE.with(|cell|{let mut c=cell.borrow_mut();if let Some(required)=c.generic_required.as_mut(){let n=required.get_mut(&bytes.max(1)).ok_or("GENERIC_REUSE_EXTENT_NOT_PLANNED")?;if *n==0{return Err("GENERIC_REUSE_EXTENT_MULTIPLICITY".into());}*n-=1;}Ok(())})
+pub fn generic_buffer_request(bytes: usize) -> mgbfs_core::Result<()> {
+    CACHE.with(|cell| {
+        let mut c = cell.borrow_mut();
+        if let Some(required) = c.generic_required.as_mut() {
+            let n = required
+                .get_mut(&bytes.max(1))
+                .ok_or("GENERIC_REUSE_EXTENT_NOT_PLANNED")?;
+            if *n == 0 {
+                return Err("GENERIC_REUSE_EXTENT_MULTIPLICITY".into());
+            }
+            *n -= 1;
+        }
+        Ok(())
+    })
 }
-pub fn generic_requirements_consumed()->mgbfs_core::Result<()> {
- CACHE.with(|cell|{let c=cell.borrow();if c.generic_required.as_ref().is_some_and(|v|v.values().any(|&n|n!=0)){return Err("GENERIC_REUSE_EXTENTS_UNCONSUMED".into());}Ok(())})
+pub fn generic_requirements_consumed() -> mgbfs_core::Result<()> {
+    CACHE.with(|cell| {
+        let c = cell.borrow();
+        if c.generic_required
+            .as_ref()
+            .is_some_and(|v| v.values().any(|&n| n != 0))
+        {
+            return Err("GENERIC_REUSE_EXTENTS_UNCONSUMED".into());
+        }
+        Ok(())
+    })
 }
-pub fn stream_take(device:i32)->Option<*mut c_void>{CACHE.with(|cell|{let mut c=cell.borrow_mut();if !c.enabled{return None;}let i=c.streams.iter().position(|(_,d)|*d==device)?;let p=c.streams.swap_remove(i).0;c.stream_hits+=1;Some(p)})}
-pub fn event_take(device:i32)->Option<*mut c_void>{CACHE.with(|cell|{let mut c=cell.borrow_mut();if !c.enabled{return None;}let i=c.events.iter().position(|(_,d)|*d==device)?;let p=c.events.swap_remove(i).0;c.event_hits+=1;Some(p)})}
-pub fn stream_put(ptr:*mut c_void,device:i32)->bool{CACHE.with(|cell|{let mut c=cell.borrow_mut();if !c.enabled||!c.permit_comm{return false;}c.streams.push((ptr,device));true})}
-pub fn event_put(ptr:*mut c_void,device:i32)->bool{CACHE.with(|cell|{let mut c=cell.borrow_mut();if !c.enabled||!c.permit_comm{return false;}c.events.push((ptr,device));true})}
+pub fn stream_take(device: i32) -> Option<*mut c_void> {
+    CACHE.with(|cell| {
+        let mut c = cell.borrow_mut();
+        if !c.enabled {
+            return None;
+        }
+        let i = c.streams.iter().position(|(_, d)| *d == device)?;
+        let p = c.streams.swap_remove(i).0;
+        c.stream_hits += 1;
+        Some(p)
+    })
+}
+pub fn event_take(device: i32) -> Option<*mut c_void> {
+    CACHE.with(|cell| {
+        let mut c = cell.borrow_mut();
+        if !c.enabled {
+            return None;
+        }
+        let i = c.events.iter().position(|(_, d)| *d == device)?;
+        let p = c.events.swap_remove(i).0;
+        c.event_hits += 1;
+        Some(p)
+    })
+}
+pub fn stream_put(ptr: *mut c_void, device: i32) -> bool {
+    CACHE.with(|cell| {
+        let mut c = cell.borrow_mut();
+        if !c.enabled || !c.permit_comm {
+            return false;
+        }
+        c.streams.push((ptr, device));
+        true
+    })
+}
+pub fn event_put(ptr: *mut c_void, device: i32) -> bool {
+    CACHE.with(|cell| {
+        let mut c = cell.borrow_mut();
+        if !c.enabled || !c.permit_comm {
+            return false;
+        }
+        c.events.push((ptr, device));
+        true
+    })
+}
 pub fn buffer_take(bytes: usize) -> Option<*mut c_void> {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if !c.enabled { return None; }
+        if !c.enabled {
+            return None;
+        }
         let i = c.buffers.iter().position(|(_, n)| *n == bytes)?;
         c.buffer_hits += 1;
         Some(c.buffers.swap_remove(i).0)
@@ -180,8 +421,11 @@ pub fn buffer_take(bytes: usize) -> Option<*mut c_void> {
 pub fn buffer_put(ptr: *mut c_void, bytes: usize) -> bool {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if !c.enabled { return false; }
-        c.buffers.push((ptr, bytes)); true
+        if !c.enabled {
+            return false;
+        }
+        c.buffers.push((ptr, bytes));
+        true
     })
 }
 pub fn reusable_bytes() -> u64 {
@@ -196,7 +440,9 @@ pub fn reusable_bytes() -> u64 {
 pub fn comm_take() -> Option<*mut c_void> {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if !c.enabled || c.comm.is_null() { return None; }
+        if !c.enabled || c.comm.is_null() {
+            return None;
+        }
         c.comm_hits += 1;
         Some(std::mem::replace(&mut c.comm, std::ptr::null_mut()))
     })
@@ -204,18 +450,25 @@ pub fn comm_take() -> Option<*mut c_void> {
 pub fn comm_put(ptr: *mut c_void) -> bool {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if !c.enabled || !c.permit_comm || !c.comm.is_null() || ptr.is_null() { return false; }
+        if !c.enabled || !c.permit_comm || !c.comm.is_null() || ptr.is_null() {
+            return false;
+        }
         // Park and all-rank agreement happen before ownership is cached.
         // Never let just one rank reuse an old communicator.
-        c.comm = ptr; true
+        c.comm = ptr;
+        true
     })
 }
 #[cfg(feature = "library-owner")]
 pub fn pool_take(bytes: u64) -> Option<*mut c_void> {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if c.pool.as_ref().is_some_and(|(_, n)| *n == bytes) { c.pool_hits += 1;c.pool.take().map(|(p, _)| p) }
-        else { None }
+        if c.pool.as_ref().is_some_and(|(_, n)| *n == bytes) {
+            c.pool_hits += 1;
+            c.pool.take().map(|(p, _)| p)
+        } else {
+            None
+        }
     })
 }
 #[cfg(target_os = "linux")]
@@ -231,10 +484,15 @@ pub fn pool_put(ptr: *mut c_void) -> bool {
     use mgbfs_cuda::library_owner::*;
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if !c.enabled || c.pool.is_some() { return false; }
+        if !c.enabled || c.pool.is_some() {
+            return false;
+        }
         let mut usage = PoolUsageV1::default();
-        if unsafe { mgbfs_library_pool_usage_v1(ptr, &mut usage) } != 0 || usage.live_bytes != 0 { return false; }
-        c.pool = Some((ptr, usage.reserved_bytes)); true
+        if unsafe { mgbfs_library_pool_usage_v1(ptr, &mut usage) } != 0 || usage.live_bytes != 0 {
+            return false;
+        }
+        c.pool = Some((ptr, usage.reserved_bytes));
+        true
     })
 }
 
@@ -243,22 +501,61 @@ mod bootstrap_tests {
     use super::*;
     #[test]
     fn successive_queries_without_parked_comm_get_fresh_ids() {
-        CACHE.with(|cache| { let mut c=cache.borrow_mut();c.enabled=true;c.nccl_id=None;assert!(c.comm.is_null()); });
-        assert_eq!(bootstrap_id(|| Ok([1;128])).unwrap(),[1;128]);
-        assert_eq!(bootstrap_id(|| Ok([2;128])).unwrap(),[2;128]);
-        CACHE.with(|cache| { let mut c=cache.borrow_mut();c.enabled=false;c.nccl_id=None; });
+        CACHE.with(|cache| {
+            let mut c = cache.borrow_mut();
+            c.enabled = true;
+            c.nccl_id = None;
+            assert!(c.comm.is_null());
+        });
+        assert_eq!(bootstrap_id(|| Ok([1; 128])).unwrap(), [1; 128]);
+        assert_eq!(bootstrap_id(|| Ok([2; 128])).unwrap(), [2; 128]);
+        CACHE.with(|cache| {
+            let mut c = cache.borrow_mut();
+            c.enabled = false;
+            c.nccl_id = None;
+        });
     }
     #[test]
     fn factory_failure_does_not_reuse_a_destroyed_comm_id() {
-        CACHE.with(|cache| { let mut c=cache.borrow_mut();c.enabled=true;c.nccl_id=Some([1;128]);assert!(c.comm.is_null()); });
-        assert_eq!(bootstrap_id(|| Err("fresh id failed".into())).unwrap_err(),"fresh id failed");
-        CACHE.with(|cache| { let mut c=cache.borrow_mut();c.enabled=false;c.nccl_id=None; });
+        CACHE.with(|cache| {
+            let mut c = cache.borrow_mut();
+            c.enabled = true;
+            c.nccl_id = Some([1; 128]);
+            assert!(c.comm.is_null());
+        });
+        assert_eq!(
+            bootstrap_id(|| Err("fresh id failed".into())).unwrap_err(),
+            "fresh id failed"
+        );
+        CACHE.with(|cache| {
+            let mut c = cache.borrow_mut();
+            c.enabled = false;
+            c.nccl_id = None;
+        });
     }
 }
 
-pub fn generic_buffer_put(ptr:*mut c_void,bytes:usize)->bool{let allowed=CACHE.with(|c|c.borrow().permit_comm);allowed&&buffer_put(ptr,bytes)}
+pub fn generic_buffer_put(ptr: *mut c_void, bytes: usize) -> bool {
+    let allowed = CACHE.with(|c| c.borrow().permit_comm);
+    allowed && buffer_put(ptr, bytes)
+}
 
 /// Release only unclaimed, quiescent buffers; preserve current job metadata.
-pub fn release_unused_buffers(){CACHE.with(|c|c.borrow_mut().release_storage());}
+pub fn release_unused_buffers() {
+    CACHE.with(|c| c.borrow_mut().release_storage());
+}
 
-pub fn release_idle_storage(){CACHE.with(|c|{let mut c=c.borrow_mut();c.release_storage();for(_,_,event,_)in c.pinned.drain(..){unsafe{cudaEventDestroy(event);}}c.shape.clear();c.generic_required=None;c.generic_manifest.clear();});}
+pub fn release_idle_storage() {
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        c.release_storage();
+        for (_, _, event, _) in c.pinned.drain(..) {
+            unsafe {
+                cudaEventDestroy(event);
+            }
+        }
+        c.shape.clear();
+        c.generic_required = None;
+        c.generic_manifest.clear();
+    });
+}

@@ -37,19 +37,22 @@ pub(crate) fn send_archive_message<T>(
 /// The common ready-credit path has no wait; only a saturated queue blocks.
 #[cfg(any(test, feature = "cuda"))]
 pub(crate) fn recv_archive_credit<T>(
-    receiver: &std::sync::mpsc::Receiver<T>, cancelled: impl Fn() -> bool,
+    receiver: &std::sync::mpsc::Receiver<T>,
+    cancelled: impl Fn() -> bool,
 ) -> Result<T> {
-    use std::sync::mpsc::{TryRecvError, RecvTimeoutError};
+    use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
     match receiver.try_recv() {
         Ok(value) => return Ok(value),
         Err(TryRecvError::Disconnected) => return Err("ARCHIVE_CREDIT_DISCONNECTED".into()),
         Err(TryRecvError::Empty) => {}
     }
     loop {
-        if cancelled() { return Err("ARCHIVE_CREDIT_CANCELLED".into()); }
+        if cancelled() {
+            return Err("ARCHIVE_CREDIT_CANCELLED".into());
+        }
         match receiver.recv_timeout(std::time::Duration::from_millis(20)) {
             Ok(value) => return Ok(value),
-            Err(RecvTimeoutError::Timeout) => {},
+            Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return Err("ARCHIVE_CREDIT_DISCONNECTED".into()),
         }
     }
@@ -60,34 +63,46 @@ mod archive_credit_tests {
     use super::recv_archive_credit;
     #[test]
     fn saturated_queue_waits_for_writer_recycle() {
-        let (tx,rx)=std::sync::mpsc::sync_channel(1);
-        let writer=std::thread::spawn(move || {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let writer = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(30));
             tx.send(42).unwrap();
         });
-        assert_eq!(recv_archive_credit(&rx, || false).unwrap(),42);
+        assert_eq!(recv_archive_credit(&rx, || false).unwrap(), 42);
         writer.join().unwrap();
     }
     #[test]
     fn waiting_credit_observes_group_cancellation_and_disconnected_writer() {
-        let (tx,rx)=std::sync::mpsc::sync_channel::<u8>(1);
-        assert_eq!(recv_archive_credit(&rx, || true).unwrap_err(),"ARCHIVE_CREDIT_CANCELLED");
+        let (tx, rx) = std::sync::mpsc::sync_channel::<u8>(1);
+        assert_eq!(
+            recv_archive_credit(&rx, || true).unwrap_err(),
+            "ARCHIVE_CREDIT_CANCELLED"
+        );
         drop(tx);
-        assert_eq!(recv_archive_credit(&rx, || false).unwrap_err(),"ARCHIVE_CREDIT_DISCONNECTED");
+        assert_eq!(
+            recv_archive_credit(&rx, || false).unwrap_err(),
+            "ARCHIVE_CREDIT_DISCONNECTED"
+        );
     }
     #[test]
     fn ready_credit_retains_direct_fast_path() {
-        let (tx,rx)=std::sync::mpsc::sync_channel(1);tx.send(7).unwrap();
-        assert_eq!(recv_archive_credit(&rx, || panic!("ready path must not wait")).unwrap(),7);
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        tx.send(7).unwrap();
+        assert_eq!(
+            recv_archive_credit(&rx, || panic!("ready path must not wait")).unwrap(),
+            7
+        );
     }
 }
 
 #[cfg(test)]
 mod submission_failure_tests {
-    use std::sync::{Arc, Mutex, mpsc};
+    use std::sync::{mpsc, Arc, Mutex};
     struct ReaderLease(Arc<Mutex<Vec<&'static str>>>);
     impl Drop for ReaderLease {
-        fn drop(&mut self) { self.0.lock().unwrap().push("reader_cleanup"); }
+        fn drop(&mut self) {
+            self.0.lock().unwrap().push("reader_cleanup");
+        }
     }
     #[test]
     fn full_descriptor_ring_reports_before_reader_cleanup() {
@@ -95,7 +110,8 @@ mod submission_failure_tests {
         let (tx, _rx) = mpsc::sync_channel(0);
         let error = super::send_archive_message(Some(&tx), ReaderLease(order.clone()), |_| {
             order.lock().unwrap().push("group_failure");
-        }).unwrap_err();
+        })
+        .unwrap_err();
         assert!(error.starts_with("ARCHIVE_DESCRIPTOR_RING_FATAL:"));
         assert_eq!(*order.lock().unwrap(), ["group_failure", "reader_cleanup"]);
     }
@@ -104,17 +120,24 @@ mod submission_failure_tests {
         let order = Arc::new(Mutex::new(Vec::new()));
         let (tx, rx) = mpsc::sync_channel(1);
         drop(rx);
-        assert!(super::send_archive_message(Some(&tx), ReaderLease(order.clone()), |_| {
-            order.lock().unwrap().push("group_failure");
-        }).is_err());
+        assert!(
+            super::send_archive_message(Some(&tx), ReaderLease(order.clone()), |_| {
+                order.lock().unwrap().push("group_failure");
+            })
+            .is_err()
+        );
         assert_eq!(*order.lock().unwrap(), ["group_failure", "reader_cleanup"]);
     }
     #[test]
     fn closed_archive_reports_before_reader_cleanup() {
         let order = Arc::new(Mutex::new(Vec::new()));
-        assert_eq!(super::send_archive_message(None, ReaderLease(order.clone()), |_| {
-            order.lock().unwrap().push("group_failure");
-        }).unwrap_err(), "ARCHIVE_CLOSED");
+        assert_eq!(
+            super::send_archive_message(None, ReaderLease(order.clone()), |_| {
+                order.lock().unwrap().push("group_failure");
+            })
+            .unwrap_err(),
+            "ARCHIVE_CLOSED"
+        );
         assert_eq!(*order.lock().unwrap(), ["group_failure", "reader_cleanup"]);
     }
     #[test]
@@ -123,7 +146,8 @@ mod submission_failure_tests {
         let (tx, rx) = mpsc::sync_channel(1);
         super::send_archive_message(Some(&tx), ReaderLease(order.clone()), |_| {
             panic!("healthy submission must not cancel the rank group");
-        }).unwrap();
+        })
+        .unwrap();
         assert!(order.lock().unwrap().is_empty());
         drop(rx.recv().unwrap());
         assert_eq!(*order.lock().unwrap(), ["reader_cleanup"]);
@@ -437,7 +461,14 @@ impl<E: Extent> Archive<E> {
     pub fn new(extent: E, capacity: u64, state_bytes: usize, config: [u8; 32]) -> Result<Self> {
         Self::new_encoded(extent, capacity, state_bytes, config, false, false)
     }
-    fn new_encoded(mut extent: E, capacity: u64, state_bytes: usize, config: [u8; 32], state_only: bool, selected_samples: bool) -> Result<Self> {
+    fn new_encoded(
+        mut extent: E,
+        capacity: u64,
+        state_bytes: usize,
+        config: [u8; 32],
+        state_only: bool,
+        selected_samples: bool,
+    ) -> Result<Self> {
         if state_bytes == 0 || state_bytes > 33025 || capacity < 48 {
             return Err("ARCHIVE_SHAPE_OR_CAPACITY".into());
         }
@@ -445,7 +476,13 @@ impl<E: Extent> Archive<E> {
             .reserve(capacity)
             .map_err(|e| format!("ARCHIVE_RESERVE: {e}"))?;
         let mut header = Vec::with_capacity(48);
-        header.extend_from_slice(if selected_samples { b"MGBFSAS2" } else if state_only { b"MGBFSAS3" } else { b"MGBFSAR1" });
+        header.extend_from_slice(if selected_samples {
+            b"MGBFSAS2"
+        } else if state_only {
+            b"MGBFSAS3"
+        } else {
+            b"MGBFSAR1"
+        });
         header.extend_from_slice(&(state_bytes as u64).to_le_bytes());
         header.extend_from_slice(&config);
         let chain = Sha256::digest(&header).into();
@@ -485,13 +522,23 @@ impl<E: Extent> Archive<E> {
     }
     /// Selective stream: bounded samples, followed by a replacement of the
     /// terminal layer. No per-state hash plane or intermediate disk contract.
-    pub fn new_selected(extent: E, capacity: u64, state_bytes: usize, config: [u8; 32]) -> Result<Self> {
+    pub fn new_selected(
+        extent: E,
+        capacity: u64,
+        state_bytes: usize,
+        config: [u8; 32],
+    ) -> Result<Self> {
         let mut archive = Self::new_encoded(extent, capacity, state_bytes, config, true, true)?;
         archive.sync_layers = false;
         Ok(archive)
     }
     /// Full state-only stream; hashing remains a CPU worker responsibility.
-    pub fn new_state_only(extent: E, capacity: u64, state_bytes: usize, config: [u8; 32]) -> Result<Self> {
+    pub fn new_state_only(
+        extent: E,
+        capacity: u64,
+        state_bytes: usize,
+        config: [u8; 32],
+    ) -> Result<Self> {
         let mut archive = Self::new_encoded(extent, capacity, state_bytes, config, true, false)?;
         archive.sync_layers = false;
         Ok(archive)
@@ -503,7 +550,10 @@ impl<E: Extent> Archive<E> {
         }
         self.frame(4, self.depth - 1, 0, &[])?;
         self.depth -= 1;
-        self.total = self.total.checked_sub(self.last_layer_records).ok_or("ARCHIVE_REPLACEMENT_COUNT")?;
+        self.total = self
+            .total
+            .checked_sub(self.last_layer_records)
+            .ok_or("ARCHIVE_REPLACEMENT_COUNT")?;
         self.replaced = true;
         Ok(())
     }
@@ -641,13 +691,20 @@ impl<E: Extent> Archive<E> {
     /// No allocation or payload copy; intended for preallocated pinned slots.
     pub fn records_wire(&mut self, depth: u64, count: u64, payload: &[u8]) -> Result<()> {
         self.live()?;
-        if self.replacement_closed || (self.selected_samples && !self.replaced &&
-                self.layer_records.checked_add(count).map_or(true, |n| n > 1000)) {
+        if self.replacement_closed
+            || (self.selected_samples
+                && !self.replaced
+                && self
+                    .layer_records
+                    .checked_add(count)
+                    .map_or(true, |n| n > 1000))
+        {
             return Err("ARCHIVE_SELECTED_RECORD_PHASE".into());
         }
         if depth != self.depth
             || count == 0
-            || count.checked_mul(self.width as u64 + if self.state_only { 0 } else { 16 }) != Some(payload.len() as u64)
+            || count.checked_mul(self.width as u64 + if self.state_only { 0 } else { 16 })
+                != Some(payload.len() as u64)
         {
             return Err("ARCHIVE_RECORD_SHAPE_OR_DEPTH".into());
         }
@@ -661,7 +718,8 @@ impl<E: Extent> Archive<E> {
     }
     pub fn layer_commit(&mut self, depth: u64, expected_records: u64) -> Result<()> {
         self.live()?;
-        if self.replacement_closed || depth != self.depth || expected_records != self.layer_records {
+        if self.replacement_closed || depth != self.depth || expected_records != self.layer_records
+        {
             return Err("ARCHIVE_LAYER_COUNT_OR_DEPTH".into());
         }
         let total = self
@@ -677,7 +735,9 @@ impl<E: Extent> Archive<E> {
         self.last_layer_records = expected_records;
         self.depth = next;
         self.layer_records = 0;
-        if self.replaced { self.replacement_closed = true; }
+        if self.replaced {
+            self.replacement_closed = true;
+        }
         Ok(())
     }
     /// Caller may invoke only after global FinalizeDepth proves exhaustion.
@@ -736,14 +796,21 @@ pub fn verify_reader(reader: &mut impl std::io::Read) -> Result<()> {
         if &h[..8] != b"MGBFSFR1"
             || h[48..80] != chain
             || word(h, 40) != sequence
-            || Some(word(h, 16)) != (if word(h, 8) == 4 { depth.checked_sub(1) } else { Some(depth) })
+            || Some(word(h, 16))
+                != (if word(h, 8) == 4 {
+                    depth.checked_sub(1)
+                } else {
+                    Some(depth)
+                })
         {
             return Err("ARCHIVE_CHAIN".into());
         }
         let kind = word(h, 8);
         let records = word(h, 24);
         let size = word(h, 32);
-        if replacement_closed && kind != 3 { return Err("ARCHIVE_REPLACEMENT_PHASE".into()); }
+        if replacement_closed && kind != 3 {
+            return Err("ARCHIVE_REPLACEMENT_PHASE".into());
+        }
         let mut sha = Sha256::new();
         sha.update(h);
         let mut remaining = size;
@@ -761,11 +828,15 @@ pub fn verify_reader(reader: &mut impl std::io::Read) -> Result<()> {
         }
         match kind {
             1 => {
-                if records == 0 || records.checked_mul(width + if state_only { 0 } else { 16 }) != Some(size) {
+                if records == 0
+                    || records.checked_mul(width + if state_only { 0 } else { 16 }) != Some(size)
+                {
                     return Err("ARCHIVE_RECORD_SHAPE".into());
                 }
                 count = count.checked_add(records).ok_or("ARCHIVE_COUNT")?;
-                if selected && !replaced && count > 1000 { return Err("ARCHIVE_SELECTED_RECORD_PHASE".into()); }
+                if selected && !replaced && count > 1000 {
+                    return Err("ARCHIVE_SELECTED_RECORD_PHASE".into());
+                }
             }
             2 => {
                 if size != 0 || records != count {
@@ -775,7 +846,9 @@ pub fn verify_reader(reader: &mut impl std::io::Read) -> Result<()> {
                 previous_count = count;
                 count = 0;
                 depth = depth.checked_add(1).ok_or("ARCHIVE_DEPTH")?;
-                if replaced { replacement_closed = true; }
+                if replaced {
+                    replacement_closed = true;
+                }
             }
             3 => {
                 if size != 0 || depth == 0 || count != 0 || records != total {
