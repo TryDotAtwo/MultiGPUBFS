@@ -866,6 +866,7 @@ def _choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specia
    if not segmented:
     from .profile_families import store as family_store
     result['family_cache_write_status']=family_store(root,shared_identity,result)
+   result['seconds']=time.monotonic()-started
   return result
 
 

@@ -1,6 +1,8 @@
 """Capacity-first autotuning must distinguish preset defaults from user limits."""
 import os
+from pathlib import Path
 import subprocess
+from threading import Event, current_thread
 import time
 from unittest.mock import patch
 
@@ -26,7 +28,7 @@ def test_expired_startup_budget_does_not_start_optional_admission(monkeypatch):
 
 def measure(tmp_path, *, explicit_lane=None, explicit_queue=None,
             capacity_loss=False, bitmap=False, slow_baseline=False, use_cache=False, free_bytes=100000, very_short=False, include_inventory=True, invalid_queue_receipt=False, cached_bytes=0, pool_bytes=0, total_bytes=200000, reserve_bytes=1000,
-            bounded=False, preserve_implicit_bitmap_banks=False, timeout_first=False, trace=None):
+            bounded=False, budget_seconds=None, preserve_implicit_bitmap_banks=False, timeout_first=False, trace=None):
     native = tmp_path / 'native'
     native.write_bytes(b'native test executable')
     graph = GraphDefinition.permutation([[1, 0, 2], [0, 2, 1]], [0, 1, 2])
@@ -91,6 +93,8 @@ def measure(tmp_path, *, explicit_lane=None, explicit_queue=None,
         patch('multigpubfs.launch.run_graph', side_effect=pilot),
     ):
         bounded_options = {'capacity_slowdown_limit': 4.0, 'pilot_limit': 3, 'pilot_wall_seconds': 5} if bounded else {}
+        if budget_seconds is not None:
+            bounded_options['startup_deadline'] = time.monotonic() + budget_seconds
         result = autotune.choose_profile(
             graph, [0, 1], None, 90, str(native), env,
             allow_specialized=False, fixed_shards=4,
@@ -148,11 +152,69 @@ def test_no_tuning_preserves_conservative_preset_defaults():
 
 
 def test_measured_profile_cache_can_be_written_and_read(tmp_path):
-    first, first_calls, _ = measure(tmp_path, use_cache=True)
-    second, second_calls, _ = measure(tmp_path, use_cache=True)
+    first, first_calls, _ = measure(tmp_path, use_cache=True, bounded=True)
+    second, second_calls, _ = measure(tmp_path, use_cache=True, bounded=True)
     assert first_calls and not first['cache_hit']
+    assert first['profile_cache_write_status']['status'] == 'WRITTEN'
     assert not second_calls and second['cache_hit']
     assert second['segment_queue_cap'] == first['segment_queue_cap']
+
+
+def test_automatic_tuning_cache_stalls_share_the_startup_deadline(tmp_path, monkeypatch):
+    import json
+
+    result, _, _ = measure(tmp_path, use_cache=True, bounded=True)
+    assert result['profile_cache_write_status']['status'] == 'WRITTEN'
+    cache, = (tmp_path / 'profiles').glob('*.json')
+    release = Event()
+    running = []
+    read_text = Path.read_text
+    dump = json.dump
+
+    def stall():
+        running.append(current_thread())
+        release.wait(6)
+
+    def slow_read(path, *args, **kwargs):
+        if path == cache:
+            stall()
+        return read_text(path, *args, **kwargs)
+
+    def slow_write(value, stream, **kwargs):
+        if isinstance(value, dict) and value.get('status') == 'MEASURED_EQUAL_PREFIX_GPU_PROFILE':
+            stall()
+        return dump(value, stream, **kwargs)
+
+    def run_stalled(budget):
+        release.clear()
+        running.clear()
+        started = time.monotonic()
+        try:
+            response, calls, _ = measure(tmp_path, use_cache=True, bounded=True, budget_seconds=budget)
+            assert running and time.monotonic() - started < budget + 0.75
+            return response, calls
+        finally:
+            release.set()
+            for worker in running:
+                if worker is not current_thread():
+                    worker.join(timeout=2)
+                    assert not worker.is_alive()
+
+    with monkeypatch.context() as blocked:
+        blocked.setattr(Path, 'read_text', slow_read)
+        read, calls = run_stalled(0.75)
+    assert read['status'] == 'TUNING_BUDGET_EXHAUSTED_CONSERVATIVE_PROFILE'
+    assert not calls
+
+    previous = '{"previous": true}'
+    cache.write_text(previous, encoding='utf-8')
+    with monkeypatch.context() as blocked:
+        blocked.setattr(json, 'dump', slow_write)
+        write, calls = run_stalled(3)
+    assert 2 <= len(calls) <= 3 and write['measured']
+    assert write['profile_cache_write_status']['status'] == 'TIMED_OUT'
+    assert cache.read_text(encoding='utf-8') == previous
+    assert not list(cache.parent.glob('*.tmp'))
 
 
 
