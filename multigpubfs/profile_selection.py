@@ -197,28 +197,23 @@ def registry_run_receipt(status, expected, report):
 
 
 def _load_catalog(spec, env):
-    from .profile_registry import read_profile_registry
-
     source, digest = spec["source"], spec["sha256"]
     cache = artifact_path("profile-registry", env=env, override="MGBFS_PROFILE_REGISTRY_CACHE")
-    offline = env.get("MGBFS_NATIVE_OFFLINE") == "1" or env.get("MGBFS_PROFILE_REGISTRY_OFFLINE") == "1"
+    command = [sys.executable, "-m", "multigpubfs.profile_registry", "import",
+               "--cache-dir", str(cache), "--stdout"]
+    if digest is not None:
+        command.extend(("--sha256", digest))
+    if env.get("MGBFS_NATIVE_OFFLINE") == "1" or env.get("MGBFS_PROFILE_REGISTRY_OFFLINE") == "1":
+        command.append("--offline")
+    command.extend(("--", source))
+    # Local files and the pinned cache may also be on a stalled filesystem.
     try:
-        return read_profile_registry(source, sha256=digest, offline=True, cache_dir=cache)
-    except (OSError, ValueError):
-        if offline or not source.startswith("https://") or digest is None:
-            raise
-    # A process deadline bounds DNS and reads from a stalled server, including redirects.
-    with tempfile.TemporaryDirectory(prefix="mgbfs-registry-import-") as folder:
-        catalog = Path(folder) / "catalog.json"
-        command = [sys.executable, "-m", "multigpubfs.profile_registry", "import", source,
-                   "--sha256", digest, "--cache-dir", str(cache), "--output", str(catalog)]
-        try:
-            result = subprocess.run(command, timeout=profile_timeout(5), capture_output=True)
-        except subprocess.TimeoutExpired as error:
-            raise ProfileBudgetExpired("REGISTRY_DOWNLOAD_DEADLINE") from error
-        if result.returncode:
-            raise ValueError("PROFILE_REGISTRY_IMPORT_FAILED")
-        return read_profile_registry(catalog)
+        result = subprocess.run(command, timeout=profile_timeout(5), capture_output=True)
+    except subprocess.TimeoutExpired as error:
+        raise ProfileBudgetExpired("REGISTRY_CATALOG_DEADLINE") from error
+    if result.returncode:
+        raise ValueError("PROFILE_REGISTRY_IMPORT_FAILED")
+    return json.loads(result.stdout)
 
 
 def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadline, *,
@@ -232,6 +227,9 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
     try:
         with profile_budget(deadline):
             catalog = _load_catalog(spec, env)
+            profile_timeout(5)
+            if "error" in catalog:
+                return None, {"status": "REGISTRY_UNAVAILABLE", "reason": catalog["error"]}
             if not catalog["entries"] or catalog["schema"] < 2:
                 return None, status
             supported = hardware()

@@ -11,7 +11,7 @@ import pytest
 from multigpubfs import GraphDefinition, open_session
 from multigpubfs import api, autotune, distributed_launch, generic_session, launch, native_distribution, profile_selection
 from multigpubfs.cluster import Cluster, Placement
-from multigpubfs.profile_registry import hardware_key
+from multigpubfs.profile_registry import _path, hardware_key
 
 
 @pytest.fixture
@@ -347,16 +347,25 @@ def test_registry_capacity_requires_a_lower_peak_than_fastest_balanced(monkeypat
     assert recipe is None and status["status"] == "NO_COMPATIBLE_PROFILE"
 
 
-def test_stalled_remote_catalog_returns_to_startup_fallback(tmp_path, monkeypatch, registry_case):
+@pytest.mark.parametrize("catalog_source", ["local", "offline-cache", "remote"])
+def test_stalled_catalog_returns_to_startup_fallback(tmp_path, monkeypatch, registry_case, catalog_source):
+    remote = "https://github.com/test/profiles/releases/download/v1/catalog.json"
+    source = str(registry_case["catalog"]) if catalog_source == "local" else remote
+    digest = registry_case["pin"]
+    env = {"MGBFS_PROFILE_REGISTRY_CACHE": str(tmp_path)}
+    if catalog_source == "offline-cache":
+        _path(tmp_path / f"{digest}.json").write_bytes(registry_case["catalog"].read_bytes())
+        env["MGBFS_PROFILE_REGISTRY_OFFLINE"] = "1"
+
     def stopped_import(command, *, timeout, capture_output):
         assert command[1:4] == ["-m", "multigpubfs.profile_registry", "import"]
+        assert "--stdout" in command and ("--offline" in command) == (catalog_source == "offline-cache")
         assert 0 < timeout <= 0.5 and capture_output
         raise TimeoutExpired(command, timeout)
 
     monkeypatch.setattr(profile_selection.subprocess, "run", stopped_import)
     recipe, status = profile_selection.select_registry_recipe(
-        {"source": "https://github.com/test/profiles/releases/download/v1/catalog.json", "sha256": "a" * 64},
-        registry_case["graph"], "balanced", "fake-native", {"MGBFS_PROFILE_REGISTRY_CACHE": str(tmp_path)},
+        {"source": source, "sha256": digest}, registry_case["graph"], "balanced", "fake-native", env,
         registry_case["capabilities"], time.monotonic() + 0.5, hardware=lambda: pytest.fail("no catalog"),
         inventory=lambda: pytest.fail("no catalog"), packet_address=None,
     )

@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import time
 from urllib.error import HTTPError
@@ -702,11 +703,15 @@ def _case(directory, *, cluster=False):
     return value
 
 
-def _write_registry(path, payload):
-    data = _canonical(validate_registry(payload))
+def _registry_bytes(payload):
+    data = _canonical(payload)
     if len(data) > MAX_BYTES:
         raise ValueError("PROFILE_REGISTRY_OBJECT_TOO_LARGE")
-    _write_bytes(path, data)
+    return data
+
+
+def _write_registry(path, payload):
+    _write_bytes(path, _registry_bytes(validate_registry(payload)))
 
 
 def export_profiles(graph, inventory, topology, baseline, capacity, registry, evidence_dir):
@@ -792,7 +797,9 @@ def main(argv=None):
     load.add_argument("--sha256")
     load.add_argument("--cache-dir")
     load.add_argument("--offline", action="store_true")
-    load.add_argument("--output", required=True)
+    destination = load.add_mutually_exclusive_group(required=True)
+    destination.add_argument("--output")
+    destination.add_argument("--stdout", action="store_true", help=argparse.SUPPRESS)
     verify = commands.add_parser("verify-publication")
     verify.add_argument("--registry", required=True)
     verify.add_argument("--evidence-dir", required=True)
@@ -808,9 +815,18 @@ def main(argv=None):
                         topology, args.baseline, args.capacity,
                         args.registry, args.evidence_dir)
     elif args.command == "import":
-        catalog = read_profile_registry(args.source, sha256=args.sha256, cache_dir=args.cache_dir,
-                                        offline=args.offline)
-        _write_registry(args.output, catalog)
+        def load_catalog():
+            return read_profile_registry(args.source, sha256=args.sha256, cache_dir=args.cache_dir,
+                                         offline=args.offline)
+
+        if args.stdout:
+            try:
+                data = _registry_bytes(load_catalog())
+            except (OSError, ValueError, TypeError) as error:
+                data = _canonical({"error": type(error).__name__})
+            sys.stdout.buffer.write(data)
+        else:
+            _write_registry(args.output, load_catalog())
     elif args.command == "publish-github":
         print(json.dumps(publish_github_registry(args.registry, args.evidence_dir,
                                                 repo=args.repo, release=args.release), sort_keys=True))
