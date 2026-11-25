@@ -169,7 +169,10 @@ class Cluster:
         self.close_path()
         from .api import _traversal_exchange_env
         from .distributed_launch import _native_artifact_hashes
-        from .launch import _PATH_SEGMENTED_NEAREST, _require_memory_backend, run_graph
+        from .launch import (
+            _PACKET_ADDR, _PACKET_BIND, _PACKET_RING, _PACKET_RX, _PATH_SEGMENTED_NEAREST,
+            _require_memory_backend, run_graph,
+        )
         from .memory_admission import resolve_traversal_memory
         from .native_distribution import native_runtime
 
@@ -187,11 +190,17 @@ class Cluster:
         prefix = f"job/{self.sequence}/memory-policy/"
         manual = dict(job.get("native_options") or {})
         transport = manual.pop("transport", None)
+        packet_slots = manual.pop("packet_slots", None)
         policy_keys = (
             "MGBFS_SEGMENT_PACK4", "MGBFS_BITMAP_BANKS", "MGBFS_SEGMENT_RESIDENT_ALPHABET8",
-            "MGBFS_SEGMENT_EXACT_EXCHANGE", "MGBFS_SEGMENT_PACKET_CONTROL_ADDR",
+            "MGBFS_SEGMENT_EXACT_EXCHANGE",
         )
         policy_env = {key: env[key] for key in policy_keys if key in env}
+        if transport != "exact":
+            if _PACKET_ADDR in env:
+                policy_env[_PACKET_ADDR] = env[_PACKET_ADDR]
+            if packet_slots is None:
+                policy_env.update((key, env[key]) for key in (_PACKET_RING, _PACKET_RX) if key in env)
         policy_env["bounded_hash"] = env.get("MGBFS_SEGMENT_HASH_SERIES") != "0"
         if manual.get("bitmap_pack4") is not None:
             policy_env.pop("MGBFS_SEGMENT_PACK4", None)
@@ -199,10 +208,8 @@ class Cluster:
             policy_env.pop("MGBFS_SEGMENT_RESIDENT_ALPHABET8", None)
         if transport is not None:
             policy_env.pop("MGBFS_SEGMENT_EXACT_EXCHANGE", None)
-        if transport == "exact":
-            policy_env.pop("MGBFS_SEGMENT_PACKET_CONTROL_ADDR", None)
-        if transport is None and "MGBFS_SEGMENT_PACKET_CONTROL_ADDR" not in env:
-            policy_env["packet_bind_configured"] = "MGBFS_SEGMENT_PACKET_BIND_ADDR" in env
+        if transport is None and _PACKET_ADDR not in env:
+            policy_env["packet_bind_configured"] = _PACKET_BIND in env
         strategies = capabilities.get("segmented_strategies_v1")
         artifacts = _native_artifact_hashes(native, env) if world > 1 else None
         self.store.put(prefix + f"preflight/{rank}", {
@@ -313,7 +320,8 @@ class Cluster:
         if network:
             env = _traversal_exchange_env(
                 env, capabilities, world, transport, launch_preset, autotune,
-                self._packet_address if self.placement.packet_port is not None else None, external=True,
+                self._packet_address if self.placement.packet_port is not None else None,
+                packet_slots=packet_slots, external=True,
             )
         report = run_graph(graph, output, device=self._local_device(),
                            executable=native, backend="generic", memory_backend=memory.backend,

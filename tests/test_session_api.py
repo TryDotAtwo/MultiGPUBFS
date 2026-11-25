@@ -116,7 +116,9 @@ def test_external_segmented_capacity_is_a_rank_cap(tmp_path, monkeypatch):
 ])
 def test_explicit_session_geometry_reaches_the_normal_launcher(tmp_path, monkeypatch, pack4, preset, transport):
     graph = GraphDefinition.permutation([[1, 0]], [0, 1])
-    monkeypatch.setattr(api, "native_runtime", lambda _: ("native", {}))
+    packet_keys = ("MGBFS_SEGMENT_PACKET_RING_SLOTS", "MGBFS_SEGMENT_PACKET_RX_SLOTS")
+    inherited = dict.fromkeys(packet_keys, "3" if transport == "exact" else "1") if transport else {}
+    monkeypatch.setattr(api, "native_runtime", lambda _: ("native", inherited))
     monkeypatch.setattr(api, "_require_memory_backend", lambda *args: {
         "bitmap_pack4_experimental_v1": True, "segmented_packet_transport_v1": True,
         "segmented_exact_exchange_v1": True,
@@ -133,6 +135,8 @@ def test_explicit_session_geometry_reaches_the_normal_launcher(tmp_path, monkeyp
             assert address is None
         else:
             assert address.startswith("127.0.0.1:") and int(address.split(":")[1]) > 0
+        expected_slot = "3" if transport == "compact" else None
+        assert all(env.get(key) == expected_slot for key in packet_keys)
         assert kwargs["autotune"] is False and kwargs["memory_preset"] == preset
         assert kwargs["memory_backend"] == "permutation_bitmap" and kwargs.get("bitmap_pack4", False) is (pack4 if pack4 is not None else preset == "maxmemory")
         assert (kwargs["shards"], kwargs["capacity"], kwargs["_batch"]) == (4, 125000, 4096)
@@ -148,6 +152,7 @@ def test_explicit_session_geometry_reaches_the_normal_launcher(tmp_path, monkeyp
         result = session.traverse(graph, preset=preset, native_options={
             "memory_backend": "permutation_bitmap",
             **({"transport": transport} if transport is not None else {}),
+            **({"packet_slots": 3} if transport == "compact" else {}),
             **({"bitmap_pack4": pack4} if pack4 is not None else {}),
             "shards": 4, "capacity": 125000, "batch": 4096,
             "queue_capacity": 32768, "owner_lanes": 4,

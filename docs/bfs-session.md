@@ -46,9 +46,11 @@ Native ranks stay open across calls and reuse communicators and compatible alloc
 
 To reproduce one geometry, pass `native_options` to `traverse()` or `--native-options` with a JSON object to `multigpubfs run`. Explicit options skip the throughput pilots. `capacity` is a hard per-rank bound on the next segmented layer for banked layouts, or on all visited states for a one-bank layout. `segment_rows` bounds the segment extent. `queue_capacity` and `owner_lanes` set requested caps for per-queue rows and active owner streams per rank. Live admission can use a smaller geometry, recorded in the run receipt.
 
-On a source build with compact exchange, `MGBFS_SEGMENT_PACKET_RING_SLOTS=3` enables three shared transmit slots per rank. A separate packing stream prepares each slot. NCCL waits for its pack event, and local NCCL completion releases the slot.
+Use `native_options={"transport": "compact", "packet_slots": 3}` to select three transmit and three receive slots per rank. Use `"packet_slots": 1` for one each or `native_options={"transport": "exact"}` for exact exchange. The same JSON works with the CLI's `--native-options` locally and on a cluster.
 
-With three transmit slots, `MGBFS_SEGMENT_PACKET_RX_SLOTS=3` also enables three shared receive slots and a separate unpacking stream. Each shard has two independent input leases into the shared buffers. The receive stream can fill one lease while an owner stream processes the other. A receive event releases the NCCL endpoint. The packet and its receive credit stay live until every referenced shard has finished, including spill replay. The packet receipt records allocation, peak occupancy and owner overlap. Direct compact traversal defaults to one transmit and one receive slot. The segmented route launch uses three of each.
+With three slots, a separate stream packs outgoing data. NCCL waits for the pack event, and local NCCL completion releases the transmit slot. Each receiving shard has two independent input leases into the shared buffers. The unpacking stream can fill one lease while an owner stream processes the other. A receive event releases the NCCL endpoint. The packet and its receive credit stay live until every referenced shard has finished, including spill replay. The packet receipt records allocation, peak occupancy and owner overlap. Direct compact traversal defaults to one transmit and one receive slot. The segmented route launch uses three of each.
+
+For lower-level launches, `MGBFS_SEGMENT_PACKET_RING_SLOTS` and `MGBFS_SEGMENT_PACKET_RX_SLOTS` set the slots separately.
 
 ```python
 result = bfs.traverse("graph.json", preset="maxmemory", native_options={

@@ -74,7 +74,7 @@ def _native_rank_failure(code, rank, job, log_path):
 
 
 def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,shards,autotune,batch=None,path_targets=None,path_bidirectional=False,path_window=None,path_max_depth=None):
- from .launch import (_PACKET_ADDR,_PACKET_RING,_PACKET_RX,_PATH_COMPACT,_PATH_PACKET_ENV,
+ from .launch import (_PACKET_ADDR,_PACKET_RING,_PACKET_RX,_PATH_COMPACT,_PACKET_ENV,
                       _PATH_SEGMENTED_NEAREST,_PATH_SEGMENTED_WINDOW,_compact_path_env,_rank_launch_config,
                       _receipt,_with_packet_job_token)
  from .cluster import current_cluster
@@ -142,7 +142,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     if path_compact:
      # This legacy one-GPU probe contributes hardware only. Rank 0 admits
      # the actual compact plan from the inventory of the entire world.
-     for key in (_PATH_COMPACT,_PATH_SEGMENTED_NEAREST,_PATH_SEGMENTED_WINDOW,*_PATH_PACKET_ENV):inventory_env.pop(key,None)
+     for key in (_PATH_COMPACT,_PATH_SEGMENTED_NEAREST,_PATH_SEGMENTED_WINDOW,*_PACKET_ENV):inventory_env.pop(key,None)
     probe=native_query([str(native),'graph-info',str(definition),str(device),'1'],env=inventory_env,capture_output=True,text=True)
     if probe.returncode:raise RuntimeError('EXTERNAL_LOCAL_ADMISSION_FAILED '+probe.stderr[-2000:])
     v=json.loads(probe.stdout);store.put(label+f'/inventory/{rank}',v['inventory'][0])

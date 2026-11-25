@@ -16,7 +16,7 @@ _PACKET_ADDR = 'MGBFS_SEGMENT_PACKET_CONTROL_ADDR'
 _PACKET_BIND = 'MGBFS_SEGMENT_PACKET_BIND_ADDR'
 _PACKET_RING = 'MGBFS_SEGMENT_PACKET_RING_SLOTS'
 _PACKET_RX = 'MGBFS_SEGMENT_PACKET_RX_SLOTS'
-_PATH_PACKET_ENV = (_PACKET_ADDR,_PACKET_BIND,_PACKET_RING,_PACKET_RX)
+_PACKET_ENV = (_PACKET_ADDR,_PACKET_BIND,_PACKET_RING,_PACKET_RX)
 
 def _rank_launch_config(admission, digest, *, bitmap=False, depth=None, path_targets=None,
                         path_bidirectional=False, path_window=None, path_max_depth=None):
@@ -476,7 +476,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   if _path_targets is not None:
    for key in tuple(preflight_env):
     if (key.startswith('MGBFS_GENERIC_PATH_') or key in (_PATH_SEGMENTED_NEAREST,_PATH_SEGMENTED_WINDOW)
-        or (path_compact and key in _PATH_PACKET_ENV)):
+        or (path_compact and key in _PACKET_ENV)):
      search_limits[key]=preflight_env.pop(key)
   native_env,communication=prepare(native,selected,preflight_env,output,graph)
   native_env.update(search_limits)

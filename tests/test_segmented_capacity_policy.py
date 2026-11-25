@@ -297,11 +297,15 @@ def test_partial_pilot_does_not_replace_faster_full_balanced_anchor():
 
 def test_balanced_anchor_and_fallback_drop_only_implicit_packet_transport():
     address = 'MGBFS_SEGMENT_PACKET_CONTROL_ADDR'
-    explicit = {address: '127.0.0.1:12345', 'MGBFS_SEGMENT_EXACT_EXCHANGE': '1'}
+    ring = {'MGBFS_SEGMENT_PACKET_RING_SLOTS': '3', 'MGBFS_SEGMENT_PACKET_RX_SLOTS': '3'}
+    explicit = {address: '127.0.0.1:12345', 'MGBFS_SEGMENT_EXACT_EXCHANGE': '1', **ring}
     implicit = dict(explicit, _MGBFS_PRESET_IMPLICIT_PACKET='1')
     fallback = {'segment_runtime_preset': 'balanced', 'segment_exact_exchange': True}
     capacity = dict(fallback, segment_runtime_preset='max_capacity')
-    assert address not in autotune._balanced_segment_environment(implicit)
-    assert address not in autotune._profile_environment(implicit, fallback)
-    assert autotune._profile_environment(explicit, fallback)[address] == explicit[address]
-    assert autotune._profile_environment(implicit, capacity)[address] == explicit[address]
+    packet = [address, *ring]
+    assert all(key not in autotune._balanced_segment_environment(implicit) for key in packet)
+    fallback_env = autotune._profile_environment(implicit, fallback)
+    assert all(key not in fallback_env for key in packet)
+    for selected in (autotune._profile_environment(explicit, fallback),
+                     autotune._profile_environment(implicit, capacity)):
+        assert [selected[key] for key in packet] == [explicit[key] for key in packet]

@@ -15,7 +15,8 @@ from . import generic_session
 from .artifact_paths import artifact_path
 from .graph_definition import GraphDefinition, _flatten, _normalize_graph
 from .launch import (
-    _PACKET_ADDR, _PATH_COMPACT, _PATH_SEGMENTED_NEAREST, _PATH_SEGMENTED_WINDOW,
+    _PACKET_ADDR, _PACKET_BIND, _PACKET_ENV, _PACKET_RING, _PACKET_RX, _PATH_COMPACT,
+    _PATH_SEGMENTED_NEAREST, _PATH_SEGMENTED_WINDOW,
     _compact_path_capability, _require_memory_backend, _require_segmented_path_capabilities,
     _supports_segmented_path, run_graph,
 )
@@ -120,28 +121,29 @@ def _explicit_transport_env(env, capabilities, world, transport):
     env = dict(env, MGBFS_SEGMENT_EXACT_EXCHANGE="1")
     env.pop("_MGBFS_PRESET_IMPLICIT_PACKET", None)
     if transport == "exact":
-        env.pop("MGBFS_SEGMENT_PACKET_CONTROL_ADDR", None)
-        env.pop("MGBFS_SEGMENT_PACKET_BIND_ADDR", None)
+        for key in _PACKET_ENV:
+            env.pop(key, None)
     return env
 
 
 def _traversal_exchange_env(env, capabilities, world, transport, preset, autotune, packet_address, *,
-                            external=False):
+                            packet_slots=None, external=False):
     env = dict(env)
     if transport is not None:
         env = _explicit_transport_env(env, capabilities, world, transport)
-    packet_key = "MGBFS_SEGMENT_PACKET_CONTROL_ADDR"
+    if packet_slots is not None:
+        env.update({_PACKET_RING: str(packet_slots), _PACKET_RX: str(packet_slots)})
     implicit = (
         transport is None and preset == "maxmemory" and world > 1 and packet_address is not None
         and capabilities.get("segmented_packet_transport_v1") is True
         and all(key not in env for key in (
-            packet_key, "MGBFS_SEGMENT_PACKET_BIND_ADDR", "MGBFS_SEGMENT_EXACT_EXCHANGE",
+            _PACKET_ADDR, _PACKET_BIND, "MGBFS_SEGMENT_EXACT_EXCHANGE",
         ))
     )
-    if (implicit or transport == "compact") and packet_key not in env:
+    if (implicit or transport == "compact") and _PACKET_ADDR not in env:
         if packet_address is None:
             raise RuntimeError("CLUSTER_COMPACT_TRANSPORT_REQUIRES_PACKET_PORT")
-        env[packet_key] = packet_address()
+        env[_PACKET_ADDR] = packet_address()
         env["MGBFS_SEGMENT_EXACT_EXCHANGE"] = "1"
         if implicit:
             env["_MGBFS_PRESET_IMPLICIT_PACKET"] = "1"
@@ -334,13 +336,17 @@ class BfsSession:
             preset = _preset(preset)
             allowed = {"memory_backend", "segment_strategy", "bitmap_pack4", "shards",
                        "capacity", "batch", "segment_rows", "bitmap_owner_page",
-                       "queue_capacity", "owner_lanes", "resident_alphabet8", "transport"}
+                       "queue_capacity", "owner_lanes", "resident_alphabet8", "transport", "packet_slots"}
             if native_options is not None and (not isinstance(native_options, dict)
                                               or native_options.keys() - allowed):
                 raise ValueError("INVALID_TRAVERSAL_NATIVE_OPTIONS")
             manual = dict(native_options or {})
             if "transport" in manual and manual["transport"] not in ("exact", "compact"):
                 raise ValueError("INVALID_TRAVERSAL_TRANSPORT")
+            if "packet_slots" in manual and (
+                    manual.get("transport") != "compact" or type(manual["packet_slots"]) is not int
+                    or manual["packet_slots"] not in (1, 3)):
+                raise ValueError("TRAVERSAL_PACKET_SLOTS_REQUIRE_COMPACT_AND_1_OR_3")
             if manual.get("resident_alphabet8") is True:
                 manual.setdefault("memory_backend", "segmented24")
             if "memory_backend" in manual and manual["memory_backend"] not in ("segmented24", "permutation_bitmap"):
@@ -402,9 +408,11 @@ class BfsSession:
             backend = memory.backend
             manual = memory.launch_options
             transport = manual.pop("transport", None)
+            packet_slots = manual.pop("packet_slots", None)
             autotune = self._tune != "off" and not native_options and recipe is None
             env = _traversal_exchange_env(
                 env, capabilities, len(devices), transport, launch_preset, autotune, self._local_packet_address,
+                packet_slots=packet_slots,
             )
             tuning = {"capacity_slowdown_limit": 4.0}
             if self._tune == "auto":

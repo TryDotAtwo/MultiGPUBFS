@@ -199,6 +199,8 @@ def test_cluster_memory_policy_respects_reserve_and_features_on_every_rank(tmp_p
                     "segmented_warp_hash_safe_v1": True, "segmented_strategies_v1": {"batch": True}}
     weak_adaptive_abi = False
     weak_batch_abi = False
+    explicit_transport = None
+    packet_keys = ("MGBFS_SEGMENT_PACKET_RING_SLOTS", "MGBFS_SEGMENT_PACKET_RX_SLOTS")
 
     def features(*_):
         if current_thread() is worker:
@@ -206,7 +208,12 @@ def test_cluster_memory_policy_respects_reserve_and_features_on_every_rank(tmp_p
                         segmented_strategies_v1={"batch": not weak_batch_abi})
         return capabilities
 
-    monkeypatch.setattr(native_distribution, "native_runtime", lambda _: ("native", {}))
+    def runtime(_):
+        if explicit_transport is None:
+            return "native", {}
+        return "native", dict.fromkeys(packet_keys, "1" if current_thread() is worker else "3")
+
+    monkeypatch.setattr(native_distribution, "native_runtime", runtime)
     monkeypatch.setattr(launch, "_require_memory_backend", features)
     monkeypatch.setattr(distributed_launch, "_native_artifact_hashes", lambda *_: {"native": "bin", "cuda": "lib"})
 
@@ -217,9 +224,20 @@ def test_cluster_memory_policy_respects_reserve_and_features_on_every_rank(tmp_p
                 "additional_reserve_bytes": reserve}
 
     calls = []
+    transport_calls = []
 
     def run_graph(graph, output, *, device, memory_backend, memory_preset, _native_env, **options):
         assert _native_env["MGBFS_SEGMENT_EXACT_EXCHANGE"] == "1"
+        if explicit_transport is not None:
+            address = _native_env.get("MGBFS_SEGMENT_PACKET_CONTROL_ADDR")
+            if explicit_transport == "compact":
+                assert address == f"127.0.0.1:{port + 3}"
+                assert all(_native_env.get(key) == "3" for key in packet_keys)
+            else:
+                assert address is None
+                assert all(key not in _native_env for key in packet_keys)
+            transport_calls.append((device, explicit_transport))
+            return {}
         assert ("MGBFS_SEGMENT_PACKET_CONTROL_ADDR" in _native_env) == (memory_preset == "maxmemory")
         calls.append((device, memory_backend, options.get("bitmap_pack4"), options["segment_strategy"]))
         return {}
@@ -252,6 +270,13 @@ def test_cluster_memory_policy_respects_reserve_and_features_on_every_rank(tmp_p
         unranked = GraphDefinition.permutation([list(range(65))], list(range(65)))
         result = peers[0].traverse(open_session(gpus=2), unranked, tmp_path / "wide-balanced", "balanced", None)
         assert result["cluster_memory_backend"] == "segmented24"
+        for explicit_transport in ("compact", "exact"):
+            options = {"transport": explicit_transport, "memory_backend": "segmented24"}
+            if explicit_transport == "compact":
+                options["packet_slots"] = 3
+            peers[0].traverse(open_session(gpus=2), graph, tmp_path / explicit_transport,
+                              "balanced", None, native_options=options)
+        assert sorted(transport_calls) == [(0, "compact"), (0, "exact"), (1, "compact"), (1, "exact")]
         peers[0].stop()
         worker.join(5)
         assert not worker.is_alive()

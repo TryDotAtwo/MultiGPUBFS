@@ -2,6 +2,7 @@
 import hashlib,json,math,os,subprocess,tempfile,time
 from pathlib import Path
 from .artifact_paths import artifact_path
+from .launch import _PACKET_ENV
 from .process_control import ProfileBudgetExpired, profile_budget, profile_timeout, query as native_query
 from .profile_cache import read_mapping as _read_profile_cache, write_mapping as _write_profile_cache
 
@@ -206,7 +207,7 @@ def _balanced_segment_environment(env):
  for marker,fields in (
   ('_MGBFS_PRESET_IMPLICIT_LANES',('MGBFS_SEGMENT_OWNER_LANES',)),
   ('_MGBFS_PRESET_IMPLICIT_QUEUE',('MGBFS_SEGMENT_QUEUE_CAP',)),
-  ('_MGBFS_PRESET_IMPLICIT_PACKET',('MGBFS_SEGMENT_PACKET_CONTROL_ADDR',)),
+  ('_MGBFS_PRESET_IMPLICIT_PACKET',_PACKET_ENV),
   ('_MGBFS_PRESET_IMPLICIT_LAYOUT',('MGBFS_SEGMENT_COMPACT_POS','MGBFS_BITMAP_BANKS')),
  ):
   if balanced.pop(marker,None)=='1':
