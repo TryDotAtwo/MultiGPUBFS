@@ -70,6 +70,8 @@ Catalog recipes match an exact graph, the ordered devices and topology, driver v
 
 Use `multigpubfs profiles export --help` to add an independently verified pair of full runs to a catalog. For runs whose normal state samples truncate a terminal layer, set `MGBFS_PROFILE_TERMINAL_EVIDENCE_DEPTH` to the expected final depth for both arms. A matching native build captures up to 768 KiB of complete terminal evidence, bound to the report by SHA-256. For audited publication, run `multigpubfs profiles publish-github --help`. It checks the evidence and uploads a content-addressed catalog to an existing release, then returns its URL and verified pin.
 
+For a cluster export, pass the coordinator's `launch.json` as `--inventory` and give `--topology` a JSON file with a `rank_metadata` array in global rank order. On each rank, `multigpubfs.profile_selection.cluster_rank_hardware(os.environ, socket.gethostname())` captures the `host`, `topology` from `nvidia-smi topo -m`, `driver` and `network` settings. A `topology_device` field identifies the corresponding `GPU<n>` slot when it differs from the local CUDA ordinal. Ranks sharing a host and local CUDA ordinal require distinct physical slots. Capture both arms with the same rank placement and memory pressure. Export checks the original hostnames and devices against both reports and the ordered hardware against both launch files. The catalog key uses node groups and GPU slots.
+
 From the source checkout, add `--registry-evidence` to the existing preset benchmark to generate a catalog from the same two runs.
 
 ```bash

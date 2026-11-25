@@ -25,6 +25,7 @@ _BACKENDS = {
 }
 _PRESETS = ("balanced", "max_capacity")
 _RUNTIME = ("native_sha256", "cuda_library_sha256")
+_INVENTORY = ("device", "compute_major", "compute_minor", "sm_count", "total_bytes")
 _VERIFICATION = "INDEPENDENT_LAYER_COUNTS_AND_EXACT_TERMINAL_SETS"
 _COMMON = ("strategy", "owner_lanes", "queue_capacity", "banks", "exact_exchange",
            "resident_codec", "segment_rows", "bitmap_owner_page", "compact_positions",
@@ -94,24 +95,86 @@ def _rank_drivers(versions, nranks):
     return list(versions)
 
 
-def hardware_key(inventory, devices, topology, *, driver_versions=None):
+def _topology_text(value):
+    if not isinstance(value, str):
+        return ""
+    plain = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", value)
+    return "\n".join(" ".join(line.split()) for line in plain.splitlines() if line.strip())
+
+
+def _cluster_topology(topology, devices):
+    metadata = topology["rank_metadata"]
+    if set(topology) != {"rank_metadata"} or not isinstance(metadata, list) or len(metadata) != len(devices):
+        return None
+    hosts, nodes, placements, network, drivers = {}, [], [], [], []
+    resolved_devices = {}
+    for rank, device in zip(metadata, devices):
+        if not isinstance(rank, dict) or set(rank) - {"host", "topology", "network", "driver", "topology_device"}:
+            return None
+        host, text, settings = rank.get("host"), _topology_text(rank.get("topology")), rank.get("network")
+        slot = rank.get("topology_device", device)
+        if (not isinstance(host, str) or not host.strip() or not text
+                or not _int(slot, 0, 4095) or f"GPU{slot}" not in text.splitlines()[0].split()
+                or not isinstance(settings, dict)
+                or any(not isinstance(key, str) or not isinstance(value, str) for key, value in settings.items())):
+            return None
+        if host not in hosts:
+            hosts[host] = len(nodes)
+            nodes.append(text)
+        node = hosts[host]
+        if nodes[node] != text or [node, slot] in placements:
+            return None
+        explicit = "topology_device" in rank
+        previous = resolved_devices.get((node, device))
+        if previous is not None and not (previous and explicit):
+            return None
+        resolved_devices[node, device] = explicit
+        placements.append([node, slot])
+        network.append(settings)
+        drivers.append(rank.get("driver"))
+    if _rank_drivers(drivers, len(devices)) is None:
+        return None
+    return nodes, placements, network, drivers
+
+
+def hardware_key(inventory, devices, topology, *, driver_versions=None, legacy_cluster=False):
     """Fingerprint ordered ranks, the whole selected topology and driver versions."""
-    if not devices or not isinstance(inventory, (list, tuple)):
+    if (not isinstance(devices, (list, tuple)) or not 1 <= len(devices) <= 128
+            or any(not _int(device, 0, 4095) for device in devices)
+            or not isinstance(inventory, (list, tuple))):
         return None
-    if isinstance(topology, str) and topology.strip():
-        plain = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", topology)
-        topology_bytes = "\n".join(" ".join(line.split()) for line in plain.splitlines()
-                                   if line.strip()).encode("utf-8")
-    elif isinstance(topology, dict) and topology and driver_versions is not None:
-        topology_bytes = _canonical(topology)
+    if isinstance(topology, dict) and "rank_metadata" in topology:
+        projected = _cluster_topology(topology, devices)
+        if (projected is None or len(inventory) != len(devices)
+                or any(not isinstance(row, dict) or row.get("device") != device
+                       for row, device in zip(inventory, devices))):
+            return None
+        nodes, placements, network, drivers = projected
+        if legacy_cluster:
+            if len(nodes) != 1 or any(network) or [slot for _, slot in placements] != list(devices):
+                return None
+            topology_bytes = nodes[0].encode("utf-8")
+        else:
+            topology_bytes = _canonical({"nodes": nodes, "ranks": placements, "network": network})
+        if driver_versions is not None and _rank_drivers(driver_versions, len(devices)) != drivers:
+            return None
+        driver_versions = drivers
+        selected = inventory
     else:
-        return None
-    if not topology_bytes:
-        return None
-    by_device = {row.get("device"): row for row in inventory if isinstance(row, dict)}
+        if len(set(devices)) != len(devices):
+            return None
+        if isinstance(topology, str):
+            topology_bytes = _topology_text(topology).encode("utf-8")
+        elif isinstance(topology, dict) and topology and driver_versions is not None:
+            topology_bytes = _canonical(topology)
+        else:
+            return None
+        if not topology_bytes:
+            return None
+        by_device = {row.get("device"): row for row in inventory if isinstance(row, dict)}
+        selected = [by_device.get(device, {}) for device in devices]
     ranks = []
-    for device in devices:
-        item = by_device.get(device, {})
+    for item in selected:
         major, minor = item.get("compute_major"), item.get("compute_minor")
         sm_count, total = item.get("sm_count"), item.get("total_bytes")
         if not (_int(major, 1, 99) and _int(minor, 0, 9) and _int(sm_count, 1, 4096) and _int(total)):
@@ -493,22 +556,30 @@ def verify_evidence(data):
         raise ValueError("PROFILE_EVIDENCE_SCHEMA")
     graph = GraphDefinition.from_dict(evidence["graph"])
     devices = evidence["devices"]
+    topology = evidence["topology"]
+    cluster = isinstance(topology, dict) and "rank_metadata" in topology
     if (not isinstance(devices, list) or not 1 <= len(devices) <= 128
-            or any(not _int(x, 0, 4095) for x in devices) or len(set(devices)) != len(devices)):
+            or any(not _int(x, 0, 4095) for x in devices)
+            or (len(set(devices)) != len(devices) and not cluster)):
         raise ValueError("PROFILE_EVIDENCE_DEVICE_SET")
-    key = hardware_key(evidence["inventory"], devices, evidence["topology"],
+    key = hardware_key(evidence["inventory"], devices, topology,
                        driver_versions=evidence.get("driver_versions"))
     if key is None or not _mapping(evidence["cases"], " ".join(_PRESETS)):
         raise ValueError("PROFILE_EVIDENCE_HARDWARE_OR_CASES")
+    hosts = [rank["host"] for rank in topology["rank_metadata"]] if cluster else None
     sizes, final, previous = _oracle(graph)
     profiles = {}
     runtime = None
     for preset in _PRESETS:
         case = evidence["cases"][preset]
         expected = "report states terminal_states" if isinstance(case, dict) and "terminal_states" in case else "report states"
+        if cluster:
+            expected += " inventory"
         if not _mapping(case, expected) or not isinstance(case["report"], dict):
             raise ValueError("PROFILE_EVIDENCE_CASE")
         report = case["report"]
+        if cluster and (report.get("rank_hostnames") != hosts or case["inventory"] != evidence["inventory"]):
+            raise ValueError("PROFILE_EVIDENCE_RANK_PLACEMENT")
         measured = report.get("layer_sizes")
         if (report.get("status") != "COMPLETE" or report.get("reason") != "FRONTIER_EXHAUSTED"
                 or not _rank_values(measured, len(sizes), low=1) or measured != sizes
@@ -531,7 +602,11 @@ def verify_evidence(data):
     return entry
 
 
-def _case(directory):
+def _project_inventory(inventory):
+    return [{key: rank[key] for key in _INVENTORY} for rank in inventory]
+
+
+def _case(directory, *, cluster=False):
     directory = Path(directory)
     report = json.loads(_read(directory / "report.json"))
     fields = ("status", "reason", "graph_digest", "layer_sizes", "backend", "devices", "bfs_seconds",
@@ -561,6 +636,12 @@ def _case(directory):
         for rank in report["segment_memory_by_rank"]
     ]
     value = {"report": projected, "states": _read(directory / "states.json").decode("utf-8")}
+    if cluster:
+        launch = json.loads(_read(directory / "launch.json"))
+        if launch.get("graph_digest") != report.get("graph_digest") or launch.get("devices") != report.get("devices"):
+            raise ValueError("PROFILE_EVIDENCE_RANK_PLACEMENT")
+        projected["rank_hostnames"] = report.get("rank_hostnames")
+        value["inventory"] = _project_inventory(launch["inventory"])
     if "terminal_states_sha256" in report:
         value["terminal_states"] = _read(directory / "terminal_states.json").decode("utf-8")
     return value
@@ -575,11 +656,12 @@ def _write_registry(path, payload):
 
 def export_profiles(graph, inventory, topology, baseline, capacity, registry, evidence_dir):
     """Add one independently checked pair of full traversals to a local v2 catalog."""
-    rank_fields = ("device", "compute_major", "compute_minor", "sm_count", "total_bytes")
+    cluster = isinstance(topology, dict) and "rank_metadata" in topology
     data = _canonical({"schema": SCHEMA, "graph": graph, "devices": inventory["devices"],
-                       "inventory": [{key: rank[key] for key in rank_fields} for rank in inventory["inventory"]],
+                       "inventory": _project_inventory(inventory["inventory"]),
                        "driver_versions": inventory.get("driver_versions"), "topology": topology,
-                       "cases": {"balanced": _case(baseline), "max_capacity": _case(capacity)}})
+                       "cases": {"balanced": _case(baseline, cluster=cluster),
+                                 "max_capacity": _case(capacity, cluster=cluster)}})
     entry = verify_evidence(data)
     registry = _path(Path(registry).resolve())
     evidence = _path(evidence_dir) / (entry["evidence_sha256"] + ".json")
@@ -647,8 +729,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     export = commands.add_parser("export")
-    for field in ("graph", "inventory", "topology", "baseline", "capacity", "registry", "evidence-dir"):
+    for field in ("graph", "inventory", "baseline", "capacity", "registry", "evidence-dir"):
         export.add_argument("--" + field, required=True)
+    export.add_argument("--topology", required=True, help="nvidia-smi topo -m output or rank metadata JSON")
     load = commands.add_parser("import")
     load.add_argument("source")
     load.add_argument("--sha256")
@@ -663,8 +746,11 @@ def main(argv=None):
         publish.add_argument("--" + field, required=True)
     args = parser.parse_args(argv)
     if args.command == "export":
+        topology = _read(args.topology).decode("utf-8")
+        if topology.lstrip().startswith("{"):
+            topology = json.loads(topology)
         export_profiles(json.loads(_read(args.graph)), json.loads(_read(args.inventory)),
-                        _read(args.topology).decode("utf-8"), args.baseline, args.capacity,
+                        topology, args.baseline, args.capacity,
                         args.registry, args.evidence_dir)
     elif args.command == "import":
         catalog = read_profile_registry(args.source, sha256=args.sha256, cache_dir=args.cache_dir,

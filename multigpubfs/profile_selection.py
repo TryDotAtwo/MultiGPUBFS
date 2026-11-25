@@ -31,32 +31,29 @@ def local_hardware():
 
 
 def cluster_hardware(rank_metadata, inventory):
-    if any(item is None for item in rank_metadata):
+    if any(item is None for item in rank_metadata) or len(rank_metadata) != len(inventory):
         return None
-    hosts = list(dict.fromkeys(item["host"] for item in rank_metadata))
     devices = [item["device"] for item in inventory]
-    drivers = [item["driver"] for item in rank_metadata]
-    if len(hosts) == 1 and len(set(devices)) == len(devices):
-        topology = rank_metadata[0]["topology"]
-    else:
-        topology = {
-            "nodes": [next(item["topology"] for item in rank_metadata if item["host"] == host) for host in hosts],
-            "ranks": [[hosts.index(item["host"]), device] for item, device in zip(rank_metadata, devices)],
-            "network": [item["network"] for item in rank_metadata],
-        }
-        inventory = [dict(item, device=rank) for rank, item in enumerate(inventory)]
-        devices = list(range(len(inventory)))
-    return inventory, devices, topology, drivers
+    return inventory, devices, {"rank_metadata": rank_metadata}, None
 
 
 def cluster_rank_hardware(env, host):
+    from .autotune import _system_info
+
     result = local_hardware()
     if result is None:
         return None
     topology, driver = result
-    network_keys = ("NCCL_NET", "NCCL_IB_DISABLE", "NCCL_NET_GDR_LEVEL", "NCCL_P2P_DISABLE", "NCCL_SHM_DISABLE")
-    return {"host": host, "topology": topology, "driver": driver,
-            "network": {key: env[key] for key in network_keys if key in env}}
+    network_keys = ("NCCL_NET", "NCCL_IB_DISABLE", "NCCL_NET_GDR_LEVEL", "NCCL_P2P_DISABLE",
+                    "NCCL_SHM_DISABLE", "NCCL_SOCKET_IFNAME", "NCCL_IB_HCA")
+    metadata = {"host": host, "topology": topology, "driver": driver,
+                "network": {key: env[key] for key in network_keys if key in env}}
+    uuid = env.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if uuid.startswith("GPU-") and "," not in uuid:
+        index = _system_info(["nvidia-smi", "--id", uuid, "--query-gpu=index", "--format=csv,noheader"])
+        if not index.returncode and index.stdout.strip().isascii() and index.stdout.strip().isdigit():
+            metadata["topology_device"] = int(index.stdout)
+    return metadata
 
 
 def _compatible_recipe(entry, preset, env, capabilities, packet_address):
@@ -246,6 +243,11 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
             matches = matching_profiles(catalog, graph.digest(),
                                         hardware_key(rank_inventory, devices, topology, driver_versions=drivers),
                                         identity)
+            if not matches and isinstance(topology, dict) and "rank_metadata" in topology:
+                # Old single-host evidence has no explicit rank topology or NCCL settings.
+                legacy_key = hardware_key(rank_inventory, devices, topology, driver_versions=drivers,
+                                          legacy_cluster=True)
+                matches = matching_profiles(catalog, graph.digest(), legacy_key, identity)
             namespace = env.get("MGBFS_PROFILE_PRESSURE_NAMESPACE", "ambient")
             acceptable = {None, "ambient"} if preset == "balanced" and namespace == "ambient" else {namespace}
             matches = [entry for entry in matches if

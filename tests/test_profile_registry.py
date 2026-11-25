@@ -12,11 +12,13 @@ from multigpubfs.graph_definition import GraphDefinition
 from multigpubfs.profile_registry import (
     export_profiles,
     hardware_key,
+    main,
     matching_profile,
     publish_github_registry,
     read_profile_registry,
     verify_publication,
 )
+from multigpubfs.profile_selection import cluster_hardware
 from multigpubfs.traversal_receipt import merge_terminal_evidence, read_terminal_evidence, write_terminal_evidence
 
 
@@ -34,7 +36,7 @@ def _write(path, value):
     return hashlib.sha256(raw).hexdigest()
 
 
-def _case(path, graph, layers, *, seconds, pack4=False, full=False, compact=None):
+def _case(path, graph, layers, *, seconds, pack4=False, full=False, compact=None, devices=INVENTORY["devices"]):
     path.mkdir()
     compact = layers if compact is None else compact
     digest = graph.digest()
@@ -55,10 +57,10 @@ def _case(path, graph, layers, *, seconds, pack4=False, full=False, compact=None
              "resident_codec": "pack4-v1" if pack4 else "unpacked-soa", "configured_segment_rows": 2048,
              "compact_positions": False, "batch_hash_prefix_probe": False,
              "admitted_batch": 128 if pack4 else 64, "rows_per_bank": 512 + i,
-             "peak_live_rows": 2, "packet_transport": packet} for i, device in enumerate(INVENTORY["devices"])]
+             "peak_live_rows": 2, "packet_transport": packet} for i, device in enumerate(devices)]
     report = {
         "status": "COMPLETE", "reason": "FRONTIER_EXHAUSTED", "layer_sizes": [len(layer) for layer in layers],
-        "graph_digest": digest, "devices": INVENTORY["devices"], "bfs_seconds": seconds,
+        "graph_digest": digest, "devices": devices, "bfs_seconds": seconds,
         "backend": "EXPERIMENTAL_PERMUTATION_BITMAP" if pack4 else "EXPERIMENTAL_SEGMENTED24",
         "states_sha256": _write(path / "states.json", {"current": compact[-1], "previous_small": compact[-2]}),
         "plan": plan, "rank_plans": [plan, dict(plan, capacity=8191)], "segment_memory_by_rank": rows,
@@ -143,6 +145,79 @@ def test_pair_export_pin_cache_and_exact_matching(tmp_path, monkeypatch):
     evidence_path.write_bytes(evidence_path.read_bytes() + b" ")
     with pytest.raises(ValueError, match="ENTRY_MISMATCH"):
         verify_publication(catalog, evidence)
+
+
+def test_cluster_export_matches_live_rank_topology_with_repeated_local_devices(tmp_path):
+    graph = GraphDefinition.permutation([[1, 0]], [0, 1])
+    layers = [[[0, 1]], [[1, 0]]]
+    devices = [0, 0]
+    inventory = [dict(row, device=0) for row in reversed(INVENTORY["inventory"])]
+    metadata = [
+        {"host": host, "topology": "GPU0\nGPU0 X", "driver": driver,
+         "network": {"NCCL_NET": "Socket"}}
+        for host, driver in (("node-a", "535.14"), ("node-b", "545.12"))
+    ]
+    topology = {"rank_metadata": metadata}
+    launch = {"graph_digest": graph.digest(), "devices": devices, "inventory": inventory}
+    baseline = _case(tmp_path / "b", graph, layers, seconds=1.0, devices=devices)
+    capacity = _case(tmp_path / "m", graph, layers, seconds=2.0, pack4=True, devices=devices)
+    for arm in (baseline, capacity):
+        report = json.loads((arm / "report.json").read_bytes())
+        _write(arm / "report.json", dict(report, rank_hostnames=["node-a", "node-b"]))
+        _write(arm / "launch.json", launch)
+
+    graph_path, topology_path = tmp_path / "graph.json", tmp_path / "topology.json"
+    _write(graph_path, graph.to_dict())
+    _write(topology_path, topology)
+    catalog, evidence = tmp_path / "catalog.json", tmp_path / "e"
+    main(["export", "--graph", str(graph_path), "--inventory", str(baseline / "launch.json"),
+          "--topology", str(topology_path), "--baseline", str(baseline), "--capacity", str(capacity),
+          "--registry", str(catalog), "--evidence-dir", str(evidence)])
+    verified = json.loads(verify_publication(catalog, evidence))
+    entry = verified["entries"][0]
+    assert [rank["sm"] for rank in entry["hardware"]["ranks"]] == [90, 86]
+    assert entry["hardware"]["driver_versions"] == ["535.14", "545.12"]
+    assert entry["capacity_verification"] == "LOWER_PHYSICAL_PEAK"
+    # CUDA ordinals and host names are receipt data. Physical rank order determines lookup.
+    renamed = [dict(rank, host=f"rack-new-{i}", topology_device=0) for i, rank in enumerate(metadata)]
+    renumbered = [dict(row, device=i + 3) for i, row in enumerate(inventory)]
+    rows, actual, layout, drivers = cluster_hardware(renamed, renumbered)
+    assert matching_profile(verified, graph.digest(),
+                            hardware_key(rows, actual, layout, driver_versions=drivers), RUNTIME) == entry
+    key = hardware_key(inventory[::-1], devices, {"rank_metadata": metadata[::-1]})
+    assert matching_profile(verified, graph.digest(), key, RUNTIME) is None
+
+    def export():
+        return export_profiles(graph.to_dict(), launch, topology, baseline, capacity, catalog, evidence)
+
+    report_path = capacity / "report.json"
+    report = json.loads(report_path.read_bytes())
+    _write(report_path, dict(report, profile_pressure_namespace="different-headroom"))
+    assert export()["capacity_verification"] == "UNVERIFIED"
+    _write(report_path, dict(report, rank_hostnames=["node-b", "node-a"]))
+    with pytest.raises(ValueError, match="RANK_PLACEMENT"):
+        export()
+    _write(report_path, report)
+    _write(capacity / "launch.json", dict(launch, inventory=inventory[::-1]))
+    with pytest.raises(ValueError, match="RANK_PLACEMENT"):
+        export()
+
+
+def test_same_host_repeated_cuda_ordinals_need_distinct_topology_slots():
+    topology = "GPU0 GPU1\nGPU0 X PHB\nGPU1 PHB X\n"
+    ranks = [dict(host="one-node", topology=topology, driver="535.14", network={}) for _ in range(2)]
+    rows = [dict(rank, device=0) for rank in INVENTORY["inventory"]]
+    assert hardware_key(rows, [0, 0], {"rank_metadata": ranks}) is None
+    partial = {"rank_metadata": [ranks[0], dict(ranks[1], topology_device=1)]}
+    assert hardware_key(rows, [0, 0], partial) is None
+    ranked = {"rank_metadata": [dict(rank, topology_device=i) for i, rank in enumerate(ranks)]}
+    key = hardware_key(rows, [0, 0], ranked)
+    assert key and hardware_key(rows, [0, 0], ranked, legacy_cluster=True) is None
+    rows = [dict(row, device=i) for i, row in enumerate(rows)]
+    assert hardware_key(rows, [0, 1], {"rank_metadata": ranks}) == key
+    assert hardware_key(rows, [0, 1], {"rank_metadata": ranks}, legacy_cluster=True) == hardware_key(
+        rows, [0, 1], topology, driver_versions="535.14",
+    )
 
 
 @pytest.mark.parametrize("modulus", [2048, 2049])
