@@ -85,6 +85,8 @@ python -m scripts.benchmark_segmented_presets --n 13 --devices 0,1 \
 
 `pair-1/profile/registry.json` and its `evidence/` directory are written after complete terminal verification, physical VRAM sampling on every rank and a slowdown at or below 4×. The exporter checks that the reduction in sampled peak exceeds the measured baseline drift. Read `pair-1/comparison.json` for the export status and SHA-256 pin. Use `--pressure-mib` for a held allocation. Profiles measured under that pressure are eligible only under the corresponding `MGBFS_PROFILE_PRESSURE_NAMESPACE=cuda_warmed_allocation:<bytes>`.
 
+Combine catalogs exported by independent runs with `multigpubfs profiles merge --registry registry.json --evidence-dir evidence --from run-profile/registry.json run-profile/evidence`. Repeat `--from` to add more bundles. The command checks the evidence for every resulting entry, and `profiles publish-github` publishes the combined catalog under a new SHA-256 pin.
+
 Install `multigpubfs[atlas]` and call `publish(result, token=token, author="Ivan")` from `multigpubfs`. The returned receipt names the immutable Atlas revision. Set `include_incomplete=True` to publish a partial result. A subsequent upload can advance the proven coverage and preserves the earlier finalized lengths.
 
 ## Native request path

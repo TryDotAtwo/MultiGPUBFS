@@ -189,6 +189,43 @@ def test_private_release_import_verifies_bytes_before_caching(tmp_path, monkeypa
     assert len(fetched) == 2
 
 
+def test_cli_merges_verified_bundles_for_publication(tmp_path):
+    from multigpubfs.cli import main as cli
+
+    graph = GraphDefinition.permutation([[1, 0]], [0, 1])
+    layers = [[[0, 1]], [[1, 0]]]
+    baseline = _case(tmp_path / "b", graph, layers, seconds=1.0)
+    sources = []
+    entries = []
+    for index, seconds in enumerate((4.0, 2.0)):
+        root = tmp_path / str(index)
+        root.mkdir()
+        capacity = _case(root / "m", graph, layers, seconds=seconds, pack4=True)
+        catalog, evidence = root / "registry.json", root / "evidence"
+        sources.append(["--from", str(catalog), str(evidence)])
+        entries.append(export_profiles(graph.to_dict(), INVENTORY, TOPOLOGY, baseline, capacity,
+                                       catalog, evidence))
+
+    catalog, evidence = tmp_path / "registry.json", tmp_path / "merged"
+    command = ["profiles", "merge", "--registry", str(catalog), "--evidence-dir", str(evidence)]
+    cli([*command, *sources[0]])
+    cli([*command, *sources[1], *sources[0]])
+    raw = verify_publication(catalog, evidence)
+    assert json.loads(raw)["entries"] == sorted(entries, key=lambda entry: entry["evidence_sha256"])
+    topology = hardware_key(INVENTORY["inventory"], INVENTORY["devices"], TOPOLOGY,
+                            driver_versions=INVENTORY["driver_versions"])
+    assert matching_profile(json.loads(raw), graph.digest(), topology, RUNTIME) == entries[1]
+
+    entry = entries[1]["evidence_sha256"]
+    witness = Path(sources[1][2]) / (entry + ".json")
+    if os.name == "nt":
+        witness = Path(f"\\\\?\\{witness}")
+    witness.write_bytes(witness.read_bytes() + b" ")
+    with pytest.raises(ValueError, match="ENTRY_MISMATCH"):
+        cli([*command, *sources[1]])
+    assert catalog.read_bytes() == raw
+
+
 def test_cluster_export_matches_live_rank_topology_with_repeated_local_devices(tmp_path):
     graph = GraphDefinition.permutation([[1, 0]], [0, 1])
     layers = [[[0, 1]], [[1, 0]]]

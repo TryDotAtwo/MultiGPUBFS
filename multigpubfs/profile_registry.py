@@ -714,6 +714,14 @@ def _write_registry(path, payload):
     _write_bytes(path, _registry_bytes(validate_registry(payload)))
 
 
+def _write_evidence(path, data):
+    if path.exists():
+        if _read(path) != data:
+            raise ValueError("PROFILE_EVIDENCE_DIGEST")
+    else:
+        _write_bytes(path, data)
+
+
 def export_profiles(graph, inventory, topology, baseline, capacity, registry, evidence_dir):
     """Add one independently checked pair of full traversals to a local v2 catalog."""
     cluster = isinstance(topology, dict) and "rank_metadata" in topology
@@ -729,11 +737,7 @@ def export_profiles(graph, inventory, topology, baseline, capacity, registry, ev
         payload = read_profile_registry(registry) if registry.exists() else {"schema": SCHEMA, "entries": []}
         if payload["schema"] != SCHEMA:
             raise ValueError("PROFILE_REGISTRY_EXPORT_SCHEMA")
-        if evidence.exists():
-            if _read(evidence) != data:
-                raise ValueError("PROFILE_EVIDENCE_DIGEST")
-        else:
-            _write_bytes(evidence, data)
+        _write_evidence(evidence, data)
         if entry not in payload["entries"]:
             payload["entries"].append(entry)
             payload["entries"].sort(key=lambda item: item["evidence_sha256"])
@@ -741,13 +745,47 @@ def export_profiles(graph, inventory, topology, baseline, capacity, registry, ev
     return entry
 
 
+def _verified_evidence(path, entry):
+    data = _read(path)
+    if verify_evidence(data) != entry:
+        raise ValueError("PROFILE_PUBLICATION_ENTRY_MISMATCH")
+    return data
+
+
+def merge_profiles(registry, evidence_dir, sources):
+    """Add independently exported bundles to a single verified v2 catalog."""
+    registry = _path(Path(registry).resolve())
+    evidence_dir = _path(evidence_dir)
+    with _catalog_lock(registry):
+        previous = _read(registry) if registry.exists() else None
+        bundles = [(_decode(previous), evidence_dir)] if previous is not None else []
+        bundles.extend((read_profile_registry(source), _path(witnesses)) for source, witnesses in sources)
+        entries = {}
+        for catalog, witnesses in bundles:
+            if catalog["schema"] != SCHEMA:
+                raise ValueError("PROFILE_REGISTRY_MERGE_SCHEMA")
+            for entry in catalog["entries"]:
+                digest = entry["evidence_sha256"]
+                known = entries.get(digest)
+                if known is not None and known[0] != entry:
+                    raise ValueError("PROFILE_PUBLICATION_ENTRY_MISMATCH")
+                entries[digest] = (entry, witnesses / (digest + ".json"))
+        ordered = [entries[digest] for digest in sorted(entries)]
+        raw = _registry_bytes(validate_registry({"schema": SCHEMA, "entries": [entry for entry, _ in ordered]}))
+        for entry, source in ordered:
+            data = _verified_evidence(source, entry)
+            destination = evidence_dir / source.name
+            if source != destination:
+                _write_evidence(destination, data)
+        if raw != previous:
+            _write_bytes(registry, raw)
+
+
 def verify_publication(registry, evidence_dir):
     raw = _read(registry)
     payload = _decode(raw)
     for entry in payload["entries"]:
-        data = _read(Path(evidence_dir) / (entry["evidence_sha256"] + ".json"))
-        if verify_evidence(data) != entry:
-            raise ValueError("PROFILE_PUBLICATION_ENTRY_MISMATCH")
+        _verified_evidence(Path(evidence_dir) / (entry["evidence_sha256"] + ".json"), entry)
     return raw
 
 
@@ -803,6 +841,11 @@ def main(argv=None):
     verify = commands.add_parser("verify-publication")
     verify.add_argument("--registry", required=True)
     verify.add_argument("--evidence-dir", required=True)
+    merge = commands.add_parser("merge", help="Combine independently exported profile bundles")
+    merge.add_argument("--registry", required=True)
+    merge.add_argument("--evidence-dir", required=True)
+    merge.add_argument("--from", dest="sources", nargs=2, action="append", required=True,
+                       metavar=("CATALOG", "EVIDENCE_DIR"))
     publish = commands.add_parser("publish-github")
     for field in ("registry", "evidence-dir", "repo", "release"):
         publish.add_argument("--" + field, required=True)
@@ -830,6 +873,8 @@ def main(argv=None):
     elif args.command == "publish-github":
         print(json.dumps(publish_github_registry(args.registry, args.evidence_dir,
                                                 repo=args.repo, release=args.release), sort_keys=True))
+    elif args.command == "merge":
+        merge_profiles(args.registry, args.evidence_dir, args.sources)
     else:
         verify_publication(args.registry, args.evidence_dir)
 
