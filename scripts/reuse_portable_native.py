@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import subprocess
 import sys
 import tempfile
@@ -52,17 +53,27 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def changed_python_modules(git, source, target):
+def changed_package(git, source, target):
     changes = git("diff", "--no-ext-diff", "--no-renames", "--name-status", "-z", source, target, "--")
     entries = iter(changes.split(b"\0")[:-1])
     modules = []
+    version = None
     for status, raw_path in zip(entries, entries):
         path = PurePosixPath(os.fsdecode(raw_path))
         if (len(path.parts) > 1 and path.parts[0] in {"docs", "tests"}) or path.as_posix() in {
             ".github/workflows/native-contracts.yml",
             ".github/workflows/package-native.yml",
+            ".github/workflows/verify-pip-release.yml",
             "scripts/reuse_portable_native.py",
         }:
+            continue
+        if status == b"M" and path.as_posix() == "pyproject.toml":
+            previous, current = (git("show", f"{commit}:{path}") for commit in (source, target))
+            assignment = rb'^version = "([0-9]+\.[0-9]+\.[0-9]+(?:\.dev[0-9]+)?)"$'
+            old, new = (re.search(assignment, data, re.MULTILINE) for data in (previous, current))
+            if old is None or new is None or previous[:old.start(1)] + new[1] + previous[old.end(1):] != current:
+                raise ValueError("Only a package version change is supported in pyproject.toml during repack")
+            version = old[1].decode(), new[1].decode()
             continue
         if (
             status == b"M"
@@ -73,7 +84,22 @@ def changed_python_modules(git, source, target):
             modules.append(path)
             continue
         raise ValueError(f"Cannot reuse the portable wheel with a source change to {path}")
-    return modules
+    return modules, version
+
+
+def update_wheel_version(tree, version):
+    old, new = version
+    source = tree / f"multigpubfs-{old}.dist-info"
+    metadata = source / "METADATA"
+    body, count = re.subn(rb"^Version: " + re.escape(old.encode()) + rb"$",
+                          b"Version: " + new.encode(), metadata.read_bytes(), flags=re.MULTILINE)
+    if count != 1:
+        raise ValueError("The original wheel metadata does not match the source package version")
+    metadata.write_bytes(body)
+    source.rename(tree / f"multigpubfs-{new}.dist-info")
+    data_dir = tree / f"multigpubfs-{old}.data"
+    if data_dir.exists():
+        data_dir.rename(tree / f"multigpubfs-{new}.data")
 
 
 def native_records(path, prefix):
@@ -104,7 +130,7 @@ def repack_artifact(artifact_dir, source, output):
 
     source = git("rev-parse", "--verify", "--end-of-options", source + "^{commit}").decode().strip()
     target = git("rev-parse", "HEAD").decode().strip()
-    modules = changed_python_modules(git, source, target)
+    modules, version = changed_package(git, source, target)
 
     receipt = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
     name = receipt["wheel"]
@@ -146,10 +172,16 @@ def repack_artifact(artifact_dir, source, output):
         write_json(package_info, metadata)
         write_json(manifest_path, manifest)
 
+        original_prefix = manifest_path.parent.relative_to(tree).as_posix() + "/"
+        prefix = original_prefix
+        if version is not None:
+            update_wheel_version(tree, version)
+            old, new = version
+            if prefix.startswith(f"multigpubfs-{old}.data/"):
+                prefix = prefix.replace(f"multigpubfs-{old}.data/", f"multigpubfs-{new}.data/", 1)
         subprocess.run([sys.executable, "-m", "wheel", "pack", "-d", str(packed), str(tree)], check=True)
         wheel, = packed.glob("*.whl")
-        prefix = manifest_path.parent.relative_to(tree).as_posix() + "/"
-        if native_records(original, prefix) != native_records(wheel, prefix):
+        if native_records(original, original_prefix) != native_records(wheel, prefix):
             raise ValueError("Native payload or file modes changed during wheel repack")
         receipt.update(wheel=wheel.name, size=wheel.stat().st_size, sha256=sha256_file(wheel), manifest=manifest)
         write_json(packed / "manifest.json", receipt)

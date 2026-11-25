@@ -6,6 +6,13 @@ on:
         required: true
       sha256:
         required: true
+      distribution:
+        description: Release wheel layout
+        type: choice
+        options:
+          - thin
+          - bundled
+        default: thin
 permissions:
   contents: read
 jobs:
@@ -15,42 +22,129 @@ jobs:
     env:
       WHEEL_URL: ${{ inputs.wheel_url }}
       WHEEL_SHA: ${{ inputs.sha256 }}
+      WHEEL_DISTRIBUTION: ${{ inputs.distribution }}
       PIP_NO_CACHE_DIR: '1'
     steps:
-      - name: Anonymous selective wheel readback and one-command extras install
+      - name: Verify the public wheel and install it in a clean environment
         run: |
           python3 - <<'PY'
-          import hashlib,json,os,re,subprocess,urllib.request,zipfile,textwrap
+          import hashlib
+          import json
+          import os
           from pathlib import Path
-          url=os.environ['WHEEL_URL'];sha=os.environ['WHEEL_SHA']
+          import re
+          import subprocess
+          import tempfile
+          import textwrap
+          from urllib.parse import urlsplit
+          from urllib.request import urlopen
+          import zipfile
+
+          url, sha = os.environ['WHEEL_URL'], os.environ['WHEEL_SHA']
+          mode = os.environ['WHEEL_DISTRIBUTION']
+          assert mode in {'thin', 'bundled'}
           assert url.startswith('https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/')
-          assert re.fullmatch('[0-9a-f]{64}',sha)
-          wheel=Path('/tmp/anonymous-readback.whl');urllib.request.urlretrieve(url,wheel)
-          assert wheel.stat().st_size<2_000_000 and hashlib.sha256(wheel.read_bytes()).hexdigest()==sha
-          with zipfile.ZipFile(wheel) as z:
-              assert 'multigpubfs/native_assets.json' in z.namelist()
-              assert not any(n.startswith('multigpubfs/_native/') for n in z.namelist())
-              index=json.loads(z.read('multigpubfs/native_assets.json'))
-              assert set(index['production'])=={'75','80','86','89','90','100','103','120','universal'}
-          subprocess.run(['python3','-m','venv','/tmp/github-pip-clean'],check=True)
-          python='/tmp/github-pip-clean/bin/python'
-          subprocess.run([python,'-m','pip','install','multigpubfs[cayleypy] @ '+url+'#sha256='+sha],check=True)
-          check="""import importlib.metadata,os,subprocess,urllib.request
+          assert re.fullmatch('[0-9a-f]{64}', sha)
+          filename = Path(urlsplit(url).path).name
+          assert filename.startswith('multigpubfs-') and filename.endswith('.whl')
+          check = """
+          import importlib.metadata
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import sys
           from unittest.mock import patch
-          def forbidden(*args,**kwargs):raise AssertionError('Import must not probe GPU or download')
-          with patch.object(subprocess,'Popen',side_effect=forbidden),patch.object(urllib.request,'urlopen',side_effect=forbidden):
+          import urllib.request
+          import zipfile
+
+          wheel, mode = sys.argv[1:]
+          def forbidden(*args, **kwargs):
+              raise AssertionError('Import must not probe GPU or download')
+          with patch.object(subprocess, 'Popen', side_effect=forbidden), patch.object(
+              urllib.request, 'urlopen', side_effect=forbidden
+          ):
               import multigpubfs
           import cayleypy
-          from multigpubfs.native_assets import status,index_path
-          assert importlib.metadata.version('multigpubfs')==os.environ['WHEEL_URL'].rsplit('/',1)[-1].split('-')[1]
-          assert status()['status']=='NOT_PREPARED' and index_path().is_file()
+          assert importlib.metadata.version('multigpubfs') == Path(wheel).name.split('-')[1]
+          if mode == 'thin':
+              from multigpubfs.native_assets import index_path, status
+              assert status()['status'] == 'NOT_PREPARED' and index_path().is_file()
+
           multigpubfs.enable_native()
-          graph=cayleypy.CayleyGraph(cayleypy.PermutationGroups.lrx(5),device='cpu')
-          assert status()['status']=='NOT_PREPARED'
+          cayleypy.CayleyGraph(cayleypy.PermutationGroups.lrx(5), device='cpu')
+          if mode == 'thin':
+              assert status()['status'] == 'NOT_PREPARED'
           multigpubfs.disable_native()
-          print('VERIFIED_PUBLIC_GITHUB_SMALL_WHEEL_EXTRAS_IMPORT_CPU_SAFE_NO_GPU')
+
+          if mode == 'thin':
+              print('VERIFIED_PUBLIC_GITHUB_SMALL_WHEEL_EXTRAS_IMPORT_CPU_SAFE_NO_GPU')
+          else:
+              from multigpubfs.launch import _supports_segmented_path
+              from multigpubfs.native_distribution import native_runtime
+
+              native, env = native_runtime()  # Verifies the installed manifest's payload checksums.
+              package = Path(multigpubfs.__file__).resolve().parent
+              root = package / '_native'
+              assert Path(native) == root / 'bin/mgbfs' and os.access(native, os.X_OK)
+              assert root.is_relative_to(Path(sys.prefix).resolve())
+              manifest = json.loads((root / 'manifest.json').read_text())
+              embedded_path = 'multigpubfs/_native/manifest.json'
+              with zipfile.ZipFile(wheel) as archive:
+                  member, = (name for name in archive.namelist()
+                             if name == embedded_path or name.endswith('/' + embedded_path))
+                  assert manifest == json.loads(archive.read(member))
+              package_info = json.loads((package / '_package_info.json').read_text())
+              source = manifest['package_source_commit']
+              assert re.fullmatch('[0-9a-f]{40}', source) and package_info['source_commit'] == source
+              for component in ('native_binary_source_commit', 'cuda_library_source_commit'):
+                  assert re.fullmatch('[0-9a-f]{40}', manifest.get(component, manifest['source_commit']))
+              private_libraries = ('libmgbfs_cuda.so', 'libcudart.so.12', 'libnccl.so.2')
+              native_files = {'bin/mgbfs', *('lib/' + name for name in private_libraries)}
+              assert manifest['bundled_runtime'] and native_files <= manifest['sha256'].keys()
+
+              linked = subprocess.check_output(['ldd', native], env=env, text=True)
+              missing = [line for line in linked.splitlines()
+                         if 'not found' in line and 'libcuda.so.1' not in line]
+              assert not missing, missing
+              for library in private_libraries:
+                  assert any(line.split()[:3] == [library, '=>', str(root / 'lib' / library)]
+                             for line in linked.splitlines()), linked
+              capabilities = json.loads(subprocess.check_output([native, 'key-info'], env=env, text=True))
+              required = ('bitmap_pack4_experimental_v1', 'bitmap_pack4_adaptive_v2', 'permutation_bitmap_v1',
+                          'segmented_memory_presets_v1', 'segmented_packet_transport_v1')
+              assert capabilities['schema'] == 1 and all(capabilities.get(key) is True for key in required), capabilities
+              assert all(_supports_segmented_path(capabilities, reverse, window=True)
+                         for reverse in (False, True)), capabilities
+              print('VERIFIED_PUBLIC_GITHUB_BUNDLED_WHEEL_NATIVE_ABI_NO_GPU', source)
           """
-          subprocess.run([python,'-c',textwrap.dedent(check)],cwd='/tmp',check=True)
-          subprocess.run([python,'-m','multigpubfs.diagnostics','--help'],check=True)
-          subprocess.run([python,'-m','pip','check'],check=True)
+
+          with tempfile.TemporaryDirectory(prefix='mgbfs-release-') as temp:
+              directory = Path(temp)
+              wheel = directory / filename
+              digest = hashlib.sha256()
+              with urlopen(url, timeout=60) as stream, wheel.open('wb') as output:
+                  for block in iter(lambda: stream.read(4 << 20), b''):
+                      if mode == 'thin':
+                          assert output.tell() + len(block) < 2_000_000
+                      output.write(block)
+                      digest.update(block)
+              assert digest.hexdigest() == sha
+              if mode == 'thin':
+                  assert wheel.stat().st_size < 2_000_000
+                  with zipfile.ZipFile(wheel) as archive:
+                      assert 'multigpubfs/native_assets.json' in archive.namelist()
+                      assert not any(name.startswith('multigpubfs/_native/') for name in archive.namelist())
+                      index = json.loads(archive.read('multigpubfs/native_assets.json'))
+                      assert set(index['production']) == {'75', '80', '86', '89', '90', '100', '103', '120', 'universal'}
+              venv = directory / 'venv'
+              subprocess.run(['python3', '-m', 'venv', venv], check=True)
+              python = venv / 'bin/python'
+              # Reuse the verified bytes for the large bundle; the thin path checks the URL install itself.
+              pip_url = wheel.as_uri() if mode == 'bundled' else url + '#sha256=' + sha
+              subprocess.run([python, '-m', 'pip', 'install', 'multigpubfs[cayleypy] @ ' + pip_url], check=True)
+              subprocess.run([python, '-c', textwrap.dedent(check), wheel, mode], cwd=directory, check=True)
+              subprocess.run([python, '-m', 'multigpubfs.diagnostics', '--help'], cwd=directory, check=True)
+              subprocess.run([python, '-m', 'pip', 'check'], cwd=directory, check=True)
           PY
