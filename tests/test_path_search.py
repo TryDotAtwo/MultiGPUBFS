@@ -382,6 +382,12 @@ def test_native_resident_worker_keeps_traversal_generation_across_handoffs(tmp_p
 
     graph = GraphDefinition.permutation([[1, 2, 3, 0]], [0, 1, 2, 3])
     calls = []
+    replays = []
+    successor = GraphDefinition.successor
+
+    def replay(definition, state, label):
+        replays.append(label)
+        return successor(definition, state, label)
 
     class Worker:
         def __init__(self, native, env, rank, device, root, kind):
@@ -398,7 +404,7 @@ def test_native_resident_worker_keeps_traversal_generation_across_handoffs(tmp_p
             if command == "graph-path-nearest":
                 request = json.loads(Path(args[0]).read_text())
                 assert request["graph"] == graph.to_dict()
-                result = dict(status="COMPLETE", stop_reason=None, d_min=0, target_index=0, generator_ids=[],
+                result = dict(status="COMPLETE", stop_reason=None, d_min=1, target_index=0, generator_ids=[0],
                               workspace=dict(worker_pid=5, arena_capacity=4, layout_reused=False,
                                              buffer_hits=0, cached_buffers=12))
             return SimpleNamespace(wait=lambda timeout=None: 0, response={"result": result})
@@ -408,18 +414,28 @@ def test_native_resident_worker_keeps_traversal_generation_across_handoffs(tmp_p
 
     monkeypatch.setattr(generic_session, "Worker", Worker)
     monkeypatch.setattr(autotune, "_dependency_identity", lambda *args: None)
+    monkeypatch.setattr(GraphDefinition, "successor", replay)
     native = ("mgbfs", {}, 0, True)
     with generic_session.persistent_graph_workers() as pool:
         pool.select("mgbfs", (0,), {})
         traversal_worker = pool.workers[0]
-        for index in range(2):
-            result = path_search.solve(graph, targets=[graph.start], output=tmp_path / str(index), native=native)
-            assert _records(result) == {(0, ()): 1}
-            assert result.report["native_workspace"]["arena_capacity"] == 4
+        target = [[1, 2, 3, 0]]
+        result = path_search.solve(graph, targets=target, output=tmp_path / "found", native=native)
+        assert _records(result) == {(0, (0,)): 1}
+        assert result.report["native_workspace"]["arena_capacity"] == 4
+        assert replays == [0]
         nearest_worker = pool.nearest
+        limited = path_search.solve(graph, targets=target, output=tmp_path / "limit", native=native, max_paths=0)
+        assert limited.status == "INCOMPLETE" and limited.report["stop_reason"] == "PATH_LIMIT"
+        assert pool.nearest is nearest_worker
+        assert replays == [0, 0]
         pool.select("mgbfs", (0,), {})
         assert pool.workers[0] is traversal_worker
         assert pool.select_nearest("mgbfs", {}, 0) is nearest_worker
+        with pytest.raises(RuntimeError, match="NATIVE_PATH_WITNESS_MISMATCH"):
+            path_search.solve(graph, targets=[[2, 3, 0, 1], *target], output=tmp_path / "bad", native=native)
+        assert pool.nearest is None and pool.workers[0] is traversal_worker and not pool.poisoned
+        assert replays == [0, 0, 0]
     assert calls == [
         ("generic", "start"),
         ("generic", "release-memory"),
@@ -428,6 +444,7 @@ def test_native_resident_worker_keeps_traversal_generation_across_handoffs(tmp_p
         ("path-nearest", "graph-path-nearest"),
         ("path-nearest", "release-memory"),
         ("generic", "release-memory"),
+        ("path-nearest", "graph-path-nearest"),
         ("path-nearest", "close"),
         ("generic", "close"),
     ]

@@ -373,18 +373,27 @@ def _run_native_nearest(native, graph, targets, output, deadline, check, add, re
             from .generic_session import resident_nearest
 
             result = resident_nearest(executable, environment, device, query, deadline)
-        if result is None:
-            child = subprocess.run(
-                [executable, "graph-path-nearest", str(query)], env=environment,
-                capture_output=True, text=True,
-            )
-            if child.returncode:
-                raise RuntimeError("NATIVE_PATH_SEARCH_FAILED: " + child.stderr[-4000:])
-            try:
-                result = json.loads(child.stdout)
-            except ValueError as error:
-                raise RuntimeError("NATIVE_PATH_RESULT_INVALID") from error
+        if result is not None:
+            from .generic_session import nearest_receipt_generation
+
+            with nearest_receipt_generation(distributed=isinstance(device, tuple)):
+                _record_native_nearest(result, graph, targets, check, add, report)
+            return
+        child = subprocess.run(
+            [executable, "graph-path-nearest", str(query)], env=environment,
+            capture_output=True, text=True,
+        )
+        if child.returncode:
+            raise RuntimeError("NATIVE_PATH_SEARCH_FAILED: " + child.stderr[-4000:])
+        try:
+            result = json.loads(child.stdout)
+        except ValueError as error:
+            raise RuntimeError("NATIVE_PATH_RESULT_INVALID") from error
     _record_native_nearest(result, graph, targets, check, add, report)
+
+
+class _NativeNearestReceiptError(RuntimeError):
+    """A nearest worker supplied an invalid receipt or witness."""
 
 
 def _validate_native_nearest_receipt(result, target_count, generator_count):
@@ -396,23 +405,23 @@ def _validate_native_nearest_receipt(result, target_count, generator_count):
         labels = result["generator_ids"]
         checked_depth = result.get("search_confirmed_through_depth")
     except (TypeError, ValueError, KeyError) as error:
-        raise RuntimeError("NATIVE_PATH_RESULT_INVALID") from error
+        raise _NativeNearestReceiptError("NATIVE_PATH_RESULT_INVALID") from error
     valid_distance = distance is None or type(distance) is int and 0 <= distance <= I64_MAX
     if not valid_distance or not isinstance(labels, list):
-        raise RuntimeError("NATIVE_PATH_RESULT_INVALID")
+        raise _NativeNearestReceiptError("NATIVE_PATH_RESULT_INVALID")
     if checked_depth is not None and (type(checked_depth) is not int or not 0 <= checked_depth <= I64_MAX
                                       or distance is not None and checked_depth != distance):
-        raise RuntimeError("NATIVE_PATH_RESULT_INVALID")
+        raise _NativeNearestReceiptError("NATIVE_PATH_RESULT_INVALID")
     if status == "COMPLETE":
         if (reason is not None or distance is None or type(target) is not int or not 0 <= target < target_count
                 or len(labels) != distance
                 or any(type(label) is not int or not 0 <= label < generator_count for label in labels)):
-            raise RuntimeError("NATIVE_PATH_RESULT_INVALID")
+            raise _NativeNearestReceiptError("NATIVE_PATH_RESULT_INVALID")
     elif (target is not None or labels
           or status == "UNREACHABLE" and (distance is not None or reason is not None)
           or status == "INCOMPLETE" and reason not in ("TIME_LIMIT", "CANCELLED", "CUDA_MEMORY", "LINEAGE_DISK_FULL", "DEPTH_LIMIT")
           or status not in ("UNREACHABLE", "INCOMPLETE")):
-        raise RuntimeError("NATIVE_PATH_RESULT_INVALID")
+        raise _NativeNearestReceiptError("NATIVE_PATH_RESULT_INVALID")
     return status, distance, reason, target, labels, checked_depth
 
 
@@ -442,7 +451,7 @@ def _record_native_nearest(result, graph, targets, check, add, report):
             endpoint = graph.successor(endpoint, label)
         target, state = targets[target]
         if tuple(endpoint) != state:
-            raise RuntimeError("NATIVE_PATH_WITNESS_MISMATCH")
+            raise _NativeNearestReceiptError("NATIVE_PATH_WITNESS_MISMATCH")
         if add is None:
             report["nearest_witness"] = {"target_index": target, "generator_ids": labels}
         else:
@@ -626,6 +635,7 @@ def _read_native_window(root, receipt, distance, limit, target_ids, check, add, 
 
 def _run_native_window(native, graph, targets, output, deadline, check, add, report, lineage_dir, flush):
     from math import ceil
+    from .generic_session import nearest_receipt_generation
     from .launch import _window_shards, run_graph
 
     executable, environment, devices, *_ = native
@@ -648,7 +658,8 @@ def _run_native_window(native, graph, targets, output, deadline, check, add, rep
     with TemporaryDirectory(prefix=".pw-", dir=directory) as temporary:
         root = Path(temporary)
         nearest = launch(root / "nearest")
-        _record_native_nearest(nearest, graph, targets, check, None, report)
+        with nearest_receipt_generation(distributed=True):
+            _record_native_nearest(nearest, graph, targets, check, None, report)
         distance = report["d_min"]
         if report["status"] != "COMPLETE":
             return

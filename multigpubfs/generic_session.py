@@ -189,6 +189,9 @@ def invalidate_launch_group(selection):
  """Discard a generation if receipt aggregation fails after all rank jobs."""
  if selection is None:return
  pool,generation,workers,_,_=selection
+ _invalidate_generation(pool,generation,workers)
+
+def _invalidate_generation(pool,generation,workers):
  if pool is not _active or generation!=pool.generation or tuple(pool.workers)!=workers:return
  pool.poisoned=True
  getattr(pool,'communication_profiles',{}).clear()
@@ -196,6 +199,26 @@ def invalidate_launch_group(selection):
   if worker.process.poll() is None:worker.process.terminate()
  try:pool.close_workers()
  except Exception as error:print('GENERIC_SESSION_POISON_CLEANUP_FAILED '+str(error),flush=True)
+
+@contextlib.contextmanager
+def nearest_receipt_generation(*, distributed):
+ """Retire the local workers that supplied an invalid nearest result."""
+ from .path_search import _NativeNearestReceiptError
+ pool=_active
+ if pool is None:
+  yield
+  return
+ generation=pool.generation
+ workers=tuple(pool.workers) if distributed else ()
+ worker=None if distributed else pool.nearest
+ try:yield
+ except _NativeNearestReceiptError:
+  if workers:
+   _invalidate_generation(pool,generation,workers)
+  elif worker is not None and pool is _active and worker is pool.nearest:
+   try:pool.close_nearest()
+   except Exception as error:print('GENERIC_SESSION_POISON_CLEANUP_FAILED '+str(error),flush=True)
+  raise
 
 @contextlib.contextmanager
 def persistent_graph_workers():

@@ -64,7 +64,9 @@ def test_session_passes_exact_public_path_query(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize(("bad_receipt", "error"), [
     ("nearest_missing_witness", "NATIVE_PATH_RESULT_INVALID"),
+    ("nearest_wrong_endpoint", "NATIVE_PATH_WITNESS_MISMATCH"),
     ("window_missing_lineage", "NATIVE_WINDOW_CONSENSUS_MISMATCH"),
+    ("window_probe_wrong_endpoint", "NATIVE_PATH_WITNESS_MISMATCH"),
     ("window_rank_disagreement", "NATIVE_WINDOW_CONSENSUS_MISMATCH"),
 ])
 def test_local_path_receipt_failure_retires_resident_generation(tmp_path, monkeypatch, bad_receipt, error):
@@ -78,8 +80,12 @@ def test_local_path_receipt_failure_retires_resident_generation(tmp_path, monkey
     native.touch()
     terminated = []
     closed = []
-    is_window = bad_receipt.startswith("window_")
+    wrong_endpoint = error == "NATIVE_PATH_WITNESS_MISMATCH"
+    if wrong_endpoint:
+        pytest.importorskip("pyarrow")
+    is_window = bad_receipt.startswith("window_") and not wrong_endpoint
     stop_reason = "LINEAGE_LIMIT" if is_window else "TIME_LIMIT"
+    invalid = False
 
     def worker(_native, _env, rank, _device, root, _kind):
         root.mkdir()
@@ -96,13 +102,15 @@ def test_local_path_receipt_failure_retires_resident_generation(tmp_path, monkey
                            lineage_peak_bytes=0, lineage_csr_bytes=0)
         else:
             receipt.update(d_min=None, target_index=None, generator_ids=[])
-        if directory.parent.name == "bad":
+        if invalid:
             if bad_receipt == "window_rank_disagreement" and rank == 1:
                 receipt["graph_completed_through_depth"] = 1
             elif bad_receipt == "window_missing_lineage":
                 del receipt["lineage_peak_bytes"]
             elif bad_receipt == "nearest_missing_witness":
                 receipt.update(status="COMPLETE", stop_reason=None, d_min=1, target_index=0)
+            elif wrong_endpoint:
+                receipt.update(status="COMPLETE", stop_reason=None, d_min=0, target_index=0)
         (directory / "path.json").write_text(json.dumps(receipt), encoding="utf-8")
         return SimpleNamespace(poll=lambda: 0, returncode=0, pid=rank + 1)
 
@@ -123,8 +131,16 @@ def test_local_path_receipt_failure_retires_resident_generation(tmp_path, monkey
         assert first["status"] == "INCOMPLETE" and first["stop_reason"] == stop_reason
         assert not pool.poisoned and pool.generation == 1 and not closed
 
+        invalid = True
         with pytest.raises(RuntimeError, match=error):
-            launch.run_graph(graph, tmp_path / "bad", **options)
+            if wrong_endpoint:
+                from multigpubfs import path_search
+
+                path_search.solve(graph, targets=[[1, 0]], output=tmp_path / "bad",
+                                  native=(str(native), {}, (0, 1), True),
+                                  goal_mode="window" if bad_receipt.startswith("window_") else "nearest")
+            else:
+                launch.run_graph(graph, tmp_path / "bad", **options)
         assert pool.poisoned and pool.generation == 1
         assert terminated == closed == [0, 1]
         with pytest.raises(RuntimeError, match="GENERIC_SESSION_FAILED_GROUP_NO_RESTART"):
