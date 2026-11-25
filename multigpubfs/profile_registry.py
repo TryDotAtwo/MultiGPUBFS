@@ -10,7 +10,8 @@ import re
 import subprocess
 import tempfile
 import time
-from urllib.parse import quote, urlsplit
+from urllib.error import HTTPError
+from urllib.parse import quote, unquote, urlsplit
 from urllib.request import urlopen
 
 from .artifact_paths import artifact_path
@@ -368,6 +369,65 @@ def _github_source(url, pin):
     if (not (commit_file or release_file) or any(not field for field in fields)
             or parts.query or parts.fragment or not _digest(pin)):
         raise ValueError("PROFILE_REGISTRY_GITHUB_PIN_REQUIRED")
+    return fields if release_file else None
+
+
+def _download_timeout(deadline):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("PROFILE_REGISTRY_DEADLINE")
+    return remaining
+
+
+def _public_catalog_bytes(url, deadline):
+    with urlopen(url, timeout=_download_timeout(deadline)) as stream:
+        read = getattr(stream, "read1", stream.read)
+        data = bytearray()
+        while len(data) <= MAX_BYTES:
+            _download_timeout(deadline)
+            chunk = read(min(65536, MAX_BYTES + 1 - len(data)))
+            if not chunk:
+                break
+            data.extend(chunk)
+        _download_timeout(deadline)
+    return data
+
+
+def _authenticated_release_bytes(release, sha256, deadline):
+    owner, repo, _, _, tag, filename = release
+    tag = unquote(tag)
+    if (any(part in (".", "..") or re.fullmatch(r"[A-Za-z0-9_.-]+", part) is None
+            for part in (owner, repo)) or tag in (".", "..")):
+        raise ValueError("PROFILE_REGISTRY_SOURCE")
+    endpoint = f"repos/{owner}/{repo}/releases"
+    env = dict(os.environ, GH_PROMPT_DISABLED="1", GH_NO_UPDATE_NOTIFIER="1")
+
+    def github(path, *options):
+        try:
+            return subprocess.run(
+                ["gh", "api", "--hostname", "github.com", "--method", "GET", path, *options],
+                stdin=subprocess.DEVNULL, capture_output=True, env=env,
+                timeout=_download_timeout(deadline), check=True,
+            ).stdout
+        except subprocess.TimeoutExpired as error:
+            raise TimeoutError("PROFILE_REGISTRY_DEADLINE") from error
+        except (FileNotFoundError, subprocess.CalledProcessError) as error:
+            raise FileNotFoundError("PROFILE_REGISTRY_PRIVATE_RELEASE_UNAVAILABLE") from error
+
+    exact_name = json.dumps(unquote(filename))
+    selector = f".assets[] | select(.name == {exact_name}) | {{id,size,digest}}"
+    metadata = github(f"{endpoint}/tags/{quote(tag, safe='')}", "--jq", selector)
+    if not metadata:
+        raise FileNotFoundError("PROFILE_REGISTRY_GITHUB_ASSET_NOT_FOUND")
+    asset = json.loads(metadata)
+    if not _int(asset.get("id")) or not _int(asset.get("size"), high=MAX_BYTES):
+        raise ValueError("PROFILE_REGISTRY_GITHUB_ASSET_SIZE")
+    if asset.get("digest") not in (None, f"sha256:{sha256}"):
+        raise ValueError("PROFILE_REGISTRY_DIGEST")
+    data = github(f"{endpoint}/assets/{asset['id']}", "-H", "Accept: application/octet-stream")
+    if len(data) != asset["size"]:
+        raise ValueError("PROFILE_REGISTRY_GITHUB_ASSET_SIZE")
+    return data
 
 
 def read_profile_registry(source, *, sha256=None, timeout=5, cache_dir=None, offline=False):
@@ -377,7 +437,7 @@ def read_profile_registry(source, *, sha256=None, timeout=5, cache_dir=None, off
         return _decode(_read(source), sha256)
     if urlsplit(name).scheme != "https":
         raise ValueError("PROFILE_REGISTRY_SOURCE")
-    _github_source(name, sha256)
+    release = _github_source(name, sha256)
     if cache_dir is None:
         cache_dir = artifact_path("profile-registry", override="MGBFS_PROFILE_REGISTRY_CACHE")
     cache = Path(cache_dir) / (sha256 + ".json")
@@ -392,18 +452,13 @@ def read_profile_registry(source, *, sha256=None, timeout=5, cache_dir=None, off
     if not _seconds(timeout):
         raise TimeoutError("PROFILE_REGISTRY_DEADLINE")
     deadline = time.monotonic() + timeout
-    with urlopen(name, timeout=timeout) as stream:
-        read = getattr(stream, "read1", stream.read)
-        data = bytearray()
-        while len(data) <= MAX_BYTES:
-            if time.monotonic() >= deadline:
-                raise TimeoutError("PROFILE_REGISTRY_DEADLINE")
-            chunk = read(min(65536, MAX_BYTES + 1 - len(data)))
-            if not chunk:
-                break
-            data.extend(chunk)
-        if time.monotonic() > deadline:
-            raise TimeoutError("PROFILE_REGISTRY_DEADLINE")
+    try:
+        data = _public_catalog_bytes(name, deadline)
+    except HTTPError as error:
+        if release is None or error.code not in (401, 403, 404):
+            raise
+        error.close()
+        data = _authenticated_release_bytes(release, sha256, deadline)
     result = _decode(data, sha256)
     try:
         _write_bytes(cache, data)

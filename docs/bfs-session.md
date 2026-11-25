@@ -64,7 +64,7 @@ The executable advertises separate capabilities for forward and bidirectional `n
 
 ## Profile Registry and Atlas
 
-Pass `profile_registry` and `profile_registry_sha256` to `open_session()`, or use `--profile-registry` and `--profile-registry-sha256` with `multigpubfs run`. A GitHub commit URL or release asset requires a SHA-256 pin. The same pin reuses the verified cached bytes in offline mode. Set `MGBFS_PROFILE_REGISTRY_OFFLINE=1` to disable downloads. For a private release, download the asset with authenticated `gh` and pass its local path and pin. Explicit native options take precedence.
+Pass `profile_registry` and `profile_registry_sha256` to `open_session()`, or use `--profile-registry` and `--profile-registry-sha256` with `multigpubfs run`. A GitHub commit URL or release asset requires a SHA-256 pin. Private GitHub release URLs use the local authenticated `gh` session when anonymous access is denied. The same pin reuses the verified cached bytes in offline mode. Set `MGBFS_PROFILE_REGISTRY_OFFLINE=1` to disable downloads. Explicit native options take precedence.
 
 Catalog recipes match an exact graph, the ordered devices and topology, driver versions, and the native executable and CUDA library hashes. `balanced` tries measured recipes from both presets in speed order. Live admission can reject a saved recipe when the available memory or planned geometry changes. The receipt records the requested preset, the preset used to replay the selected recipe, and whether the runtime used the measured geometry.
 

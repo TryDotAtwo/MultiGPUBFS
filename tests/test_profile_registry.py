@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from urllib.error import HTTPError
 
 import pytest
 
@@ -145,6 +146,47 @@ def test_pair_export_pin_cache_and_exact_matching(tmp_path, monkeypatch):
     evidence_path.write_bytes(evidence_path.read_bytes() + b" ")
     with pytest.raises(ValueError, match="ENTRY_MISMATCH"):
         verify_publication(catalog, evidence)
+
+
+def test_private_release_import_verifies_bytes_before_caching(tmp_path, monkeypatch):
+    registry = {"schema": 2, "entries": []}
+    data = json.dumps(registry).encode()
+    digest = hashlib.sha256(data).hexdigest()
+    url = "https://github.com/owner/repo/releases/download/research%2Fv1/private%20asset.json"
+    fetched = []
+    asset_data = data.replace(b"2", b"1")
+
+    def anonymous(name, *, timeout):
+        assert name == url and 0 < timeout <= 5
+        raise HTTPError(name, 404, "Not Found", None, None)
+
+    def authenticated(command, *, stdin, capture_output, env, timeout, check):
+        assert command[:7] == ["gh", "api", "--hostname", "github.com", "--method", "GET",
+                              "repos/owner/repo/releases/tags/research%2Fv1" if not fetched
+                              else "repos/owner/repo/releases/assets/42"]
+        assert stdin == subprocess.DEVNULL and capture_output and check
+        assert env["GH_PROMPT_DISABLED"] == "1" and 0 < timeout <= 5
+        if not fetched:
+            assert command[7] == "--jq" and '"private asset.json"' in command[8]
+            payload = json.dumps({"id": 42, "size": len(data), "digest": f"sha256:{digest}"}).encode()
+        else:
+            assert command[7:] == ["-H", "Accept: application/octet-stream"]
+            payload = asset_data
+        fetched.append(command[6])
+        return subprocess.CompletedProcess(command, 0, payload, b"")
+
+    monkeypatch.setattr("multigpubfs.profile_registry.urlopen", anonymous)
+    monkeypatch.setattr("multigpubfs.profile_registry.subprocess.run", authenticated)
+    cache = tmp_path / "cache"
+    with pytest.raises(ValueError, match="PROFILE_REGISTRY_DIGEST"):
+        read_profile_registry(url, sha256=digest, cache_dir=cache)
+    assert not cache.exists()
+    asset_data = data
+    fetched.clear()
+    assert read_profile_registry(url, sha256=digest, cache_dir=cache) == registry
+    assert len(fetched) == 2
+    assert read_profile_registry(url, sha256=digest, cache_dir=cache, offline=True, timeout=0) == registry
+    assert len(fetched) == 2
 
 
 def test_cluster_export_matches_live_rank_topology_with_repeated_local_devices(tmp_path):
