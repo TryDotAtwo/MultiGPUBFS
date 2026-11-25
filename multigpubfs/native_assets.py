@@ -40,12 +40,12 @@ def _stop_hardware_probe(process,owned_group):
   except subprocess.TimeoutExpired:pass
  return process.poll() is not None
 
-def run_hardware_probe(command=None,timeout=20):
+def run_hardware_probe(command=None,timeout=20,*,env=None):
  global _probe_blocked
  if _probe_blocked:raise AssetError('OWNED_DIAGNOSTIC_PROCESS_COULD_NOT_BE_REAPED: no more hardware probes')
  command=command or [sys.executable,'-m','multigpubfs._native_hardware']
  owned_group=os.name=='posix' and not os.environ.get('MGBFS_DIAGNOSTIC_TRACE_FILE')
- p=subprocess.Popen(command,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=owned_group)
+ p=subprocess.Popen(command,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=owned_group)
  try:
   try:out,err=p.communicate(timeout=timeout)
   except subprocess.TimeoutExpired as error:

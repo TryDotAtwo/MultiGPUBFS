@@ -392,7 +392,7 @@ class BfsSession:
                 env.pop(_PATH_SEGMENTED_NEAREST, None)
                 env.pop(_PATH_SEGMENTED_WINDOW, None)
             devices = self._native_devices(native, env)
-            from .profile_selection import local_hardware, registry_run_receipt, registry_source, select_registry_recipe
+            from .profile_selection import local_profile_hardware, registry_run_receipt, registry_source, select_registry_recipe
 
             registry = registry_source(self._profile_registry, self._profile_registry_sha256, env) if not manual else None
             deadline = None
@@ -405,7 +405,7 @@ class BfsSession:
                 deadline = time.monotonic() + 5
 
                 def hardware():
-                    identity = local_hardware()
+                    identity = local_profile_hardware(devices, env)
                     return (inventory, devices, *identity) if identity is not None else None
 
                 recipe, profile_status = select_registry_recipe(

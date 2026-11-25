@@ -9,9 +9,9 @@ import time
 import pytest
 
 from multigpubfs import GraphDefinition, open_session
-from multigpubfs import api, autotune, distributed_launch, generic_session, launch, native_distribution, profile_selection
+from multigpubfs import api, autotune, distributed_launch, generic_session, launch, native_assets, native_distribution, profile_selection
 from multigpubfs.cluster import Cluster, Placement
-from multigpubfs.profile_registry import _path, hardware_key
+from multigpubfs.profile_registry import _path, hardware_key, local_profile_topology
 
 
 @pytest.fixture
@@ -86,6 +86,27 @@ def _native_receipt(case):
             "devices": case["devices"], "segment_memory_by_rank": ranks,
             "size_profile_count": 0, "plan": rank_plans[0], "rank_plans": rank_plans,
             "owner_cuts": case["cuts"], "layer_sizes": [1, 1], "graph_digest": case["graph"].digest()}
+
+
+def test_local_profile_resolves_physical_slots_before_registry_lookup(monkeypatch):
+    topology = "GPU2 GPU4\nGPU2 X PHB\nGPU4 PHB X"
+    driver = "535.14"
+    env = {"CUDA_VISIBLE_DEVICES": "GPU-reordered", "NCCL_P2P_DISABLE": "1"}
+    monkeypatch.setattr(profile_selection, "local_hardware", lambda: (topology, driver))
+
+    def probe(*, timeout, env):
+        assert 0 < timeout <= 1 and env["CUDA_VISIBLE_DEVICES"] == "GPU-reordered"
+        return {"devices": [{"logical_id": 0, "pci_bus_id": "0000:03:00.0"},
+                            {"logical_id": 1, "pci_bus_id": "0000:04:00.0"}]}
+
+    monkeypatch.setattr(native_assets, "run_hardware_probe", probe)
+    physical = "2, 00000000:04:00.0, [N/A]\n4, 00000000:03:00.0, Disabled"
+    monkeypatch.setattr(autotune, "_system_info", lambda cmd: CompletedProcess(cmd, 0, stdout=physical))
+    with monkeypatch.context() as context:
+        context.setattr(profile_selection.sys, "platform", "linux")
+        layout, found_driver = profile_selection.local_profile_hardware([0, 1], env)
+    assert found_driver == driver and layout["topology_devices"] == [4, 2]
+    assert layout["network"] == {"NCCL_P2P_DISABLE": hashlib.sha256(b"1").hexdigest()}
 
 
 def test_public_session_replays_pinned_recipe_and_keeps_manual_and_fallback_paths(tmp_path, monkeypatch, registry_case):
@@ -173,9 +194,11 @@ def test_public_session_replays_pinned_recipe_and_keeps_manual_and_fallback_path
     assert (len(topology_calls), len(inventory_calls), len(plans)) == (4, 2, 1)
 
 
-@pytest.mark.parametrize("capacity_seconds, runtime_drift", [(1.0, False), (3.0, False), (3.0, True)])
+@pytest.mark.parametrize("capacity_seconds, drift", [
+    (1.0, None), (3.0, None), (3.0, "geometry"), (3.0, "preflight"), (3.0, "legacy"),
+])
 def test_public_presets_report_historical_bounds_for_the_replayed_recipe(
-    tmp_path, monkeypatch, registry_case, capacity_seconds, runtime_drift,
+    tmp_path, monkeypatch, registry_case, capacity_seconds, drift,
 ):
     case = registry_case
     catalog = json.loads(case["catalog"].read_bytes())
@@ -190,6 +213,17 @@ def test_public_presets_report_historical_bounds_for_the_replayed_recipe(
     capacity.update(memory_backend="permutation_bitmap", strategy="atomic", resident_codec="pack4-v1",
                     banks=2, owner_cuts=None, hash_lookup_series_limit=None, batch_hash_prefix_probe=False,
                     packet_wire=wire, bfs_seconds=capacity_seconds, peak_vram_bytes_by_rank=[100, 100])
+    slots = list(case["devices"])
+
+    def hardware(layout):
+        return hardware_key(case["inventory"], slots, layout, driver_versions=case["driver"])
+
+    topology = local_profile_topology(case["topology"], slots, {})
+    assert hardware(topology) != hardware(local_profile_topology(case["topology"], slots[::-1], {}))
+    assert hardware(topology) != hardware(local_profile_topology(case["topology"], slots,
+                                profile_selection.nccl_profile_network({"NCCL_P2P_DISABLE": "1"})))
+    if drift != "legacy":
+        entry["hardware"] = hardware(topology)
     entry.update(profiles={"balanced": balanced, "max_capacity": capacity},
                  capacity_verification="LOWER_PHYSICAL_PEAK")
     case["catalog"].write_text(json.dumps(catalog), encoding="utf-8")
@@ -228,8 +262,10 @@ def test_public_presets_report_historical_bounds_for_the_replayed_recipe(
         report.update(backend="EXPERIMENTAL_PERMUTATION_BITMAP", bfs_seconds=capacity["bfs_seconds"])
         for rank in report["segment_memory_by_rank"]:
             rank["packet_transport"] = dict(wire, tx_exchange_slots=3, rx_exchange_slots=3)
-        if runtime_drift and len(launched) == 2:
+        if drift == "geometry" and len(launched) == 2:
             report["segment_memory_by_rank"][0]["rows_per_bank"] += 1
+        if drift == "preflight" and len(launched) == 2:
+            report["communication_preflight"] = {"status": "VERIFIED", "policy": {"NCCL_P2P_DISABLE": "1"}}
         return report
 
     monkeypatch.delenv("WORLD_SIZE", raising=False)
@@ -239,7 +275,7 @@ def test_public_presets_report_historical_bounds_for_the_replayed_recipe(
     monkeypatch.setattr(api.BfsSession, "_local_packet_address", lambda _: address)
     monkeypatch.setattr(api, "run_graph", native_launch)
     monkeypatch.setattr(native_distribution, "runtime_identity", lambda *_: case["runtime"])
-    monkeypatch.setattr(profile_selection, "local_hardware", lambda: (case["topology"], case["driver"]))
+    monkeypatch.setattr(profile_selection, "local_profile_hardware", lambda *_: (topology, case["driver"]))
     monkeypatch.setattr(profile_selection, "query", graph_plan)
     with open_session(devices=case["devices"], output_root=tmp_path, profile_registry=case["catalog"]) as session:
         fastest = session.bfs(case["graph"], preset="balanced")
@@ -259,13 +295,13 @@ def test_public_presets_report_historical_bounds_for_the_replayed_recipe(
     policy = lowest.report["session_policy"]
     receipt = policy["profile_registry"]
     assert policy["preset"] == receipt["requested_preset"] == receipt["recipe_preset"] == "maxmemory"
-    assert receipt["runtime_geometry"] == ("CHANGED" if runtime_drift else "MATCHED")
+    assert receipt["runtime_geometry"] == ("CHANGED" if drift == "geometry" else "MATCHED")
     assert receipt["capacity_comparison"]["baseline_evidence_sha256"] == case["evidence"]
     assert receipt["capacity_comparison"]["baseline_arm"] == ("max_capacity" if capacity_faster else "balanced")
     assert receipt["historical_ratio"] == capacity_seconds / min(capacity_seconds, balanced["bfs_seconds"])
     bound = "MEASURED_FULL_BFS_HISTORICAL_BOUND"
-    assert policy["capacity_slowdown_status"] == ("UNVERIFIED" if runtime_drift else bound)
-    assert policy["cross_backend_slowdown_status"] == ("UNVERIFIED" if runtime_drift or capacity_faster else bound)
+    assert policy["capacity_slowdown_status"] == ("UNVERIFIED" if drift else bound)
+    assert policy["cross_backend_slowdown_status"] == ("UNVERIFIED" if drift or capacity_faster else bound)
 
 
 @pytest.mark.parametrize("metadata_timeout", [False, True])

@@ -1,5 +1,6 @@
 """Use compatible Registry recipes only after native admission of the live ranks."""
 
+import hashlib
 import json
 import os
 import subprocess
@@ -41,6 +42,43 @@ def local_hardware():
     return (topology.stdout, next(iter(versions))) if len(versions) == 1 else None
 
 
+def nccl_profile_network(env):
+    return {key: hashlib.sha256(value.encode()).hexdigest()
+            for key, value in env.items() if key.startswith("NCCL_")}
+
+
+def local_profile_hardware(devices, env):
+    from .autotune import _system_info
+    from .native_assets import AssetError, run_hardware_probe
+    from .profile_registry import local_profile_topology
+
+    result = local_hardware()
+    if result is None or sys.platform != "linux":
+        return result
+    topology, driver = result
+    try:
+        hardware = run_hardware_probe(timeout=profile_timeout(1), env=env)
+        by_device = {row["logical_id"]: row["pci_bus_id"] for row in hardware["devices"]}
+        physical = _system_info(["nvidia-smi", "--query-gpu=index,pci.bus_id,mig.mode.current", "--format=csv,noheader"])
+        if physical.returncode:
+            return result
+
+        def bus_key(pci):
+            domain, address = pci.strip().lower().split(":", 1)
+            return int(domain, 16), address
+
+        by_bus = {}
+        for line in physical.stdout.splitlines():
+            index, bus, mig = (field.strip() for field in line.split(","))
+            if mig != "Enabled":
+                by_bus[bus_key(bus)] = int(index)
+        slots = [by_bus[bus_key(by_device[device])] for device in devices]
+    except (AssetError, AttributeError, OSError, ValueError, KeyError, TypeError):
+        return result
+    layout = local_profile_topology(topology, slots, nccl_profile_network(env))
+    return (layout, driver) if layout is not None else result
+
+
 def cluster_hardware(rank_metadata, inventory):
     if any(item is None for item in rank_metadata) or len(rank_metadata) != len(inventory):
         return None
@@ -55,10 +93,8 @@ def cluster_rank_hardware(env, host):
     if result is None:
         return None
     topology, driver = result
-    network_keys = ("NCCL_NET", "NCCL_IB_DISABLE", "NCCL_NET_GDR_LEVEL", "NCCL_P2P_DISABLE",
-                    "NCCL_SHM_DISABLE", "NCCL_SOCKET_IFNAME", "NCCL_IB_HCA")
     metadata = {"host": host, "topology": topology, "driver": driver,
-                "network": {key: env[key] for key in network_keys if key in env}}
+                "network": nccl_profile_network(env)}
     uuid = env.get("CUDA_VISIBLE_DEVICES", "").strip()
     if uuid.startswith("GPU-") and "," not in uuid:
         index = _system_info(["nvidia-smi", "--id", uuid, "--query-gpu=index", "--format=csv,noheader"])
@@ -196,18 +232,25 @@ def registry_run_receipt(status, expected, report):
 
     if expected is None:
         return status
+    receipt = dict(status)
+    historical_network = receipt.pop("historical_network_by_rank", None)
     try:
         actual = _case_profile(report, report["devices"], SCHEMA)
     except (ValueError, TypeError, KeyError, IndexError):
-        return dict(status, runtime_geometry="UNVERIFIED")
+        return dict(receipt, runtime_geometry="UNVERIFIED")
     fields = (*_COMMON, *_PLAN, "memory_backend", "owner_cuts")
     rank_fields = ("admitted_batch", "rows_per_bank", "capacity_limit_per_rank", "reserve_bytes")
     matches = (len(actual["rank_geometry"]) == len(expected["rank_geometry"])
                and all(actual[field] == expected[field] for field in fields)
                and all(left[field] == right[field] for left, right in
                        zip(actual["rank_geometry"], expected["rank_geometry"]) for field in rank_fields))
-    receipt = dict(status, runtime_geometry="MATCHED" if matches else "CHANGED")
-    if matches and "capacity_comparison" in status:
+    receipt["runtime_geometry"] = "MATCHED" if matches else "CHANGED"
+    policy = report.get("communication_preflight", {}).get("policy") or {}
+    network_matches = (historical_network is not None and all(
+        network.get(key) == value for key, value in nccl_profile_network(policy).items()
+        for network in historical_network
+    ))
+    if matches and network_matches and "capacity_comparison" in status:
         receipt["capacity_slowdown_status"] = "MEASURED_FULL_BFS_HISTORICAL_BOUND"
     return receipt
 
@@ -253,10 +296,22 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
                 return None, status
             rank_inventory, devices, topology, drivers = supported
             identity = runtime_identity(native, env)
+            rank_metadata = topology.get("rank_metadata") if isinstance(topology, dict) else None
+            local_layout = isinstance(topology, dict) and "local_topology" in topology
             matches = matching_profiles(catalog, graph.digest(),
                                         hardware_key(rank_inventory, devices, topology, driver_versions=drivers),
                                         identity)
-            if not matches and isinstance(topology, dict) and "rank_metadata" in topology:
+            historical_network = None
+            if matches and local_layout:
+                historical_network = [topology["network"]] * len(devices)
+            elif matches and rank_metadata and all("topology_device" in rank for rank in rank_metadata):
+                historical_network = [rank["network"] for rank in rank_metadata]
+            elif matches and rank_metadata is None and nccl_profile_network(env):
+                return None, status
+            if not matches and local_layout and not topology["network"]:
+                matches = matching_profiles(catalog, graph.digest(), hardware_key(
+                    rank_inventory, devices, topology["local_topology"], driver_versions=drivers), identity)
+            if not matches and rank_metadata is not None:
                 # Old single-host evidence has no explicit rank topology or NCCL settings.
                 legacy_key = hardware_key(rank_inventory, devices, topology, driver_versions=drivers,
                                           legacy_cluster=True)
@@ -357,6 +412,7 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
                     "selected_bfs_seconds": recipe.evidence["bfs_seconds"],
                     "pressure_namespace": baseline_pressure,
                 }
+                status["historical_network_by_rank"] = historical_network
             profile_timeout(5)
             return recipe, status
     except ProfileBudgetExpired:

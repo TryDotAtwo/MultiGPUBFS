@@ -104,6 +104,18 @@ def _topology_text(value):
     return "\n".join(" ".join(line.split()) for line in plain.splitlines() if line.strip())
 
 
+def local_profile_topology(topology, slots, network):
+    text = _topology_text(topology)
+    labels = set(text.split("\n", 1)[0].split())
+    if (not labels or not isinstance(slots, list) or not slots
+            or any(not _int(slot, 0, 4095) or f"GPU{slot}" not in labels for slot in slots)
+            or len(set(slots)) != len(slots) or not isinstance(network, dict)
+            or any(not isinstance(key, str) or not key.startswith("NCCL_") or not _digest(value)
+                   for key, value in network.items())):
+        return None
+    return {"local_topology": text, "topology_devices": slots, "network": network}
+
+
 def _cluster_topology(topology, devices):
     metadata = topology["rank_metadata"]
     if set(topology) != {"rank_metadata"} or not isinstance(metadata, list) or len(metadata) != len(devices):
@@ -165,7 +177,14 @@ def hardware_key(inventory, devices, topology, *, driver_versions=None, legacy_c
     else:
         if len(set(devices)) != len(devices):
             return None
-        if isinstance(topology, str):
+        if isinstance(topology, dict) and "local_topology" in topology:
+            if set(topology) != {"local_topology", "topology_devices", "network"}:
+                return None
+            layout = local_profile_topology(topology["local_topology"], topology["topology_devices"], topology["network"])
+            if layout is None or len(layout["topology_devices"]) != len(devices):
+                return None
+            topology_bytes = _canonical(layout)
+        elif isinstance(topology, str):
             topology_bytes = _topology_text(topology).encode("utf-8")
         elif isinstance(topology, dict) and topology and driver_versions is not None:
             topology_bytes = _canonical(topology)

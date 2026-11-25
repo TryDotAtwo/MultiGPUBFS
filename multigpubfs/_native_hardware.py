@@ -13,13 +13,17 @@ def discover():
  lib.cuDeviceGet.argtypes=[C.POINTER(C.c_int),C.c_int];lib.cuDeviceGet.restype=C.c_int
  lib.cuDeviceGetAttribute.argtypes=[C.POINTER(C.c_int),C.c_int,C.c_int];lib.cuDeviceGetAttribute.restype=C.c_int
  lib.cuDeviceGetName.argtypes=[C.c_void_p,C.c_int,C.c_int];lib.cuDeviceGetName.restype=C.c_int
+ lib.cuDeviceGetPCIBusId.argtypes=[C.c_void_p,C.c_int,C.c_int];lib.cuDeviceGetPCIBusId.restype=C.c_int
  devices=[]
  for logical in range(count.value):
   device=C.c_int();ck(lib.cuDeviceGet(C.byref(device),logical),'cuDeviceGet');cc=[]
   for attribute in (75,76):
    value=C.c_int();ck(lib.cuDeviceGetAttribute(C.byref(value),attribute,device.value),'cuDeviceGetAttribute');cc.append(value.value)
   name=C.create_string_buffer(256);ck(lib.cuDeviceGetName(name,len(name),device.value),'cuDeviceGetName')
-  devices.append({'logical_id':logical,'name':name.value.decode(errors='replace'),'compute_capability':cc})
+  pci=C.create_string_buffer(32)
+  pci_status=lib.cuDeviceGetPCIBusId(pci,len(pci),device.value)
+  devices.append({'logical_id':logical,'name':name.value.decode(errors='replace'),'compute_capability':cc,
+                  'pci_bus_id':None if pci_status else pci.value.decode('ascii')})
  return {'driver_api':version.value,'devices':devices}
 if __name__=='__main__':
  try:print(json.dumps(discover()),flush=True)

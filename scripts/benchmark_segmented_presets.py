@@ -2,19 +2,21 @@
 
 import argparse
 from contextlib import nullcontext
+from functools import cache
 import hashlib
 import json
 import math
 import os
 from pathlib import Path
+import subprocess
 import time
 
 if __package__:
     from .segmented_acceptance_oracle import verify_output
-    from .segmented_benchmark_gpu import BenchmarkGpus, MIB
+    from .segmented_benchmark_gpu import BenchmarkGpus, MIB, _nvidia_smi
 else:
     from segmented_acceptance_oracle import verify_output
-    from segmented_benchmark_gpu import BenchmarkGpus, MIB
+    from segmented_benchmark_gpu import BenchmarkGpus, MIB, _nvidia_smi
 
 
 S13_WINDOW = (34, 44)
@@ -424,6 +426,16 @@ def _run_leg(graph, output, gpus, native, env, recipe, request, pressure, *,
             raise ValueError(f"native terminal evidence missing: {report.get('terminal_evidence_status')}")
     checks = verify_output(n, report, output / "states.json", terminal=terminal)
     preflight = report.get("communication_preflight", {})
+    profile_evidence = {}
+    if registry_evidence:
+        from multigpubfs.profile_selection import nccl_profile_network
+
+        profile_evidence["profile_vram_sampling"] = memory
+        same_visibility = all(env.get(key) == os.environ.get(key) for key in (
+            "CUDA_VISIBLE_DEVICES", "CUDA_DEVICE_ORDER", "NVIDIA_VISIBLE_DEVICES",
+        ))
+        if same_visibility and preflight.get("status") in ("VERIFIED", "SINGLE_GPU"):
+            profile_evidence["profile_network"] = nccl_profile_network(dict(env, **(preflight.get("policy") or {})))
     return {
         "runtime_identity": report["runtime_identity"], "graph_digest": report["graph_digest"],
         "recipe": recipe, "transport_mode": transport_mode,
@@ -453,16 +465,47 @@ def _run_leg(graph, output, gpus, native, env, recipe, request, pressure, *,
         "transport_high_water_observed_by_rank": (
             transport_observations(output, request["devices"]) if request["transport_high_water"] else None
         ),
-        **({"profile_vram_sampling": memory} if registry_evidence else {}),
+        **profile_evidence,
     }
 
 
-def _export_registry_pair(graph, pair_path, legs, comparison):
+def _physical_indices_by_uuid():
+    try:
+        output = _nvidia_smi("--query-gpu=index,uuid", "--format=csv,noheader,nounits")
+        indices = {}
+        for line in output.splitlines():
+            index, uuid = (field.strip() for field in line.split(","))
+            if not index.isascii() or not index.isdecimal() or not uuid.startswith("GPU-") or uuid in indices:
+                return {}
+            indices[uuid] = int(index)
+        return indices if len(set(indices.values())) == len(indices) else {}
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
+
+
+def _registry_topology(legs, resolve_indices):
+    from multigpubfs.profile_registry import local_profile_topology
+
+    reference = legs["balanced"]
+    snapshot = reference["before"]
+    topology = snapshot["topology"]
+    network = reference.get("profile_network")
+    if (network is None or resolve_indices is None or
+            not all(gpu.get("pci_bus_id") for gpu in snapshot["devices"])):
+        return topology
+    indices = resolve_indices()
+    slots = [indices.get(gpu["uuid"]) for gpu in snapshot["devices"]]
+    return local_profile_topology(topology, slots, network) or topology
+
+
+def _export_registry_pair(graph, pair_path, legs, comparison, *, resolve_indices=None):
     from multigpubfs.profile_registry import export_profiles
 
     full = comparison["full"]
     if full["status"] != WITHIN_BOUND:
         return {"status": full["status"], "reason": full["reason"] or "paired full traversal exceeded 4×"}
+    if legs["balanced"].get("profile_network") != legs["maxmemory"].get("profile_network"):
+        return {"status": UNVERIFIED, "reason": "effective NCCL overrides differ across preset runs"}
     receipts = {}
     inventory = None
     pressure = legs["balanced"]["pressure"]
@@ -525,16 +568,24 @@ def _export_registry_pair(graph, pair_path, legs, comparison):
         temporary.replace(target)
     destination = pair_path / "profile"
     destination.mkdir()
-    topology = legs["balanced"]["before"]["topology"]
+    topology = _registry_topology(legs, resolve_indices)
     _write(destination / "graph.json", graph.to_dict())
     _write(destination / "inventory.json", inventory)
-    (destination / "topology.txt").write_text(topology + "\n", encoding="utf-8")
+    (destination / "topology.txt").write_text(legs["balanced"]["before"]["topology"] + "\n", encoding="utf-8")
+    topology_path = "profile/topology.txt"
+    physical_slots = isinstance(topology, dict)
+    if physical_slots:
+        (destination / "topology.json").write_text(
+            json.dumps(topology, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8",
+        )
+        topology_path = "profile/topology.json"
     catalog = destination / "registry.json"
     entry = export_profiles(graph.to_dict(), inventory, topology, pair_path / "balanced",
                             pair_path / "maxmemory", catalog, destination / "evidence")
     return {
         "status": "EXPORTED", "capacity_verification": entry["capacity_verification"],
         "pressure_namespace": namespace, "catalog": "profile/registry.json",
+        "topology": topology_path, "topology_verification": "PHYSICAL_SLOTS" if physical_slots else UNVERIFIED,
         "catalog_sha256": hashlib.sha256(catalog.read_bytes()).hexdigest(),
         "evidence": f"profile/evidence/{entry['evidence_sha256']}.json",
         **drift_evidence,
@@ -720,6 +771,7 @@ def main():
     })
     observed = {label: [] for label in labels}
     limited = {label: [] for label in labels}
+    resolve_indices = cache(_physical_indices_by_uuid)
     sweep = len(pressure_levels) > 1
     for held_mib in pressure_levels:
         held = held_mib * MIB
@@ -766,7 +818,9 @@ def main():
                                           pressure["observed_free_tolerance_bytes"], labels=labels)
                 if args.registry_evidence:
                     try:
-                        comparison["registry_evidence"] = _export_registry_pair(graph, pair_path, legs, comparison)
+                        comparison["registry_evidence"] = _export_registry_pair(
+                            graph, pair_path, legs, comparison, resolve_indices=resolve_indices,
+                        )
                     except (KeyError, OSError, ValueError, RuntimeError) as error:
                         comparison["registry_evidence"] = {"status": UNVERIFIED, "reason": str(error)}
                     print("REGISTRY_EVIDENCE", json.dumps(comparison["registry_evidence"]))
