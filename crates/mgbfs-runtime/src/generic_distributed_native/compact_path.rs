@@ -1,5 +1,6 @@
 //! Native path candidate generation and owner consumption on compact packets.
-use super::{Event, GenericDistributedBfs, WindowEdge, WindowLineage, WindowSenders, WindowTile};
+use super::window::{WindowEdge, WindowSenders};
+use super::{Event, GenericDistributedBfs, WindowLineage, WindowTile};
 use crate::generic_distributed_memory::GenericDistributedMemoryPlan as Plan;
 use crate::generic_native::{Buffer, GenericNativeBfs, Stream};
 use crate::segmented_distributed_native::{
