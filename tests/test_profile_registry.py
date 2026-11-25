@@ -189,6 +189,30 @@ def test_private_release_import_verifies_bytes_before_caching(tmp_path, monkeypa
     assert len(fetched) == 2
 
 
+def test_registry_cli_prefetch_uses_explicit_download_timeout(tmp_path, monkeypatch):
+    registry = {"schema": 2, "entries": []}
+    data = json.dumps(registry).encode()
+    digest = hashlib.sha256(data).hexdigest()
+    url = "https://github.com/owner/repo/releases/download/v1/profiles.json"
+    cache = tmp_path / "cache"
+    output = tmp_path / "catalog.json"
+    calls = []
+
+    def download(source, deadline):
+        import time
+
+        assert source == url and 5 < deadline - time.monotonic() <= 20
+        calls.append(source)
+        return data
+
+    monkeypatch.setattr("multigpubfs.profile_registry._public_catalog_bytes", download)
+    arguments = ["import", url, "--sha256", digest, "--cache-dir", str(cache), "--output", str(output)]
+    main(arguments + ["--timeout", "20"])
+    assert json.loads(output.read_bytes()) == registry
+    main(arguments + ["--offline"])
+    assert calls == [url]
+
+
 def test_cli_merges_verified_bundles_for_publication(tmp_path):
     from multigpubfs.cli import main as cli
 

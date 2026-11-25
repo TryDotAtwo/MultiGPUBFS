@@ -862,6 +862,8 @@ def main(argv=None):
     load.add_argument("source")
     load.add_argument("--sha256")
     load.add_argument("--cache-dir")
+    load.add_argument("--timeout", type=float, default=5,
+                      help="maximum download time in seconds (default: 5)")
     load.add_argument("--offline", action="store_true")
     destination = load.add_mutually_exclusive_group(required=True)
     destination.add_argument("--output")
@@ -887,8 +889,8 @@ def main(argv=None):
                         args.registry, args.evidence_dir)
     elif args.command == "import":
         def load_catalog():
-            return read_profile_registry(args.source, sha256=args.sha256, cache_dir=args.cache_dir,
-                                         offline=args.offline)
+            return read_profile_registry(args.source, sha256=args.sha256, timeout=args.timeout,
+                                         cache_dir=args.cache_dir, offline=args.offline)
 
         if args.stdout:
             try:
