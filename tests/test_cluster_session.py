@@ -41,6 +41,24 @@ def test_cluster_session_does_not_allocate_a_second_local_pool(monkeypatch):
         assert generic_session._active is None
 
 
+def test_external_rank_failure_preserves_bounded_native_cause(tmp_path):
+    from types import SimpleNamespace
+
+    from multigpubfs.distributed_launch import _native_rank_failure
+
+    log = tmp_path / 'rank-1.log'
+    log.write_bytes(b'old context\n' + b'x' * 4096 + b'\nCUDA_JOB_CAUSE\n')
+    job = SimpleNamespace(returncode=1, response=None)
+    error = str(_native_rank_failure('EXTERNAL_NATIVE_RANK_FAILED', 1, job, log))
+    assert error.startswith('EXTERNAL_NATIVE_RANK_FAILED 1 (exit 1)')
+    assert error.endswith('CUDA_JOB_CAUSE') and 'old context' not in error
+
+    job.response = {'error': 'RANK_CAPABILITY_MISMATCH'}
+    assert str(_native_rank_failure('EXTERNAL_NATIVE_RANK_FAILED', 1, job, log)).endswith(
+        'RANK_CAPABILITY_MISMATCH'
+    )
+
+
 @pytest.mark.parametrize("override,expected", [
     ({}, "127.0.0.1:29504"),
     ({"MGBFS_SEGMENT_PACKET_CONTROL_ADDR": "192.0.2.1:41000"}, "192.0.2.1:41000"),

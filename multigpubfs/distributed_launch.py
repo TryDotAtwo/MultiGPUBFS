@@ -56,6 +56,23 @@ def _native_artifact_hashes(native,env):
  dependency=_dependency_identity(native,env)
  return {'native':_file_digest(native),'cuda':dependency['cuda_library_sha256'] if dependency else None}
 
+
+def _native_rank_failure(code, rank, job, log_path):
+    response = getattr(job, 'response', None)
+    detail = response.get('error') if isinstance(response, dict) else None
+    if not isinstance(detail, str) or not detail.strip():
+        try:
+            with Path(log_path).open('rb') as stream:
+                stream.seek(0, os.SEEK_END)
+                stream.seek(max(0, stream.tell() - 2048))
+                detail = stream.read(2048).decode('utf-8', errors='replace')
+        except OSError:
+            detail = ''
+    message = f'{code} {rank} (exit {job.returncode})'
+    detail = detail.strip()[-2048:]
+    return RuntimeError(f'{message}: {detail}' if detail else message)
+
+
 def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,shards,autotune,batch=None,path_targets=None,path_bidirectional=False,path_window=None,path_max_depth=None):
  from .launch import (_PACKET_ADDR,_PACKET_RING,_PACKET_RX,_PATH_COMPACT,_PATH_PACKET_ENV,
                       _PATH_SEGMENTED_NEAREST,_PATH_SEGMENTED_WINDOW,_compact_path_env,_rank_launch_config,
@@ -189,7 +206,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
      if rank==0 and not segmented:
       bootstrap_deadline=time.monotonic()+600
       while not bootstrap.exists():
-       if job.poll() is not None:raise RuntimeError('EXTERNAL_BOOTSTRAP_WORKER_EXIT')
+       if job.poll() is not None:raise _native_rank_failure('EXTERNAL_BOOTSTRAP_WORKER_EXIT',rank,job,log.name)
        if time.monotonic()>=bootstrap_deadline:raise RuntimeError('EXTERNAL_BOOTSTRAP_TIMEOUT_NO_RESTART')
        store.check_error();time.sleep(.02)
       store.put(label+'/nccl-id',base64.b64encode(bootstrap.read_bytes()).decode())
@@ -216,7 +233,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
        if time.monotonic()-observed_start>600:raise RuntimeError('EXTERNAL_BOOTSTRAP_TIMEOUT_NO_RESTART')
       if (deadline is not None and time.monotonic()>deadline) or (observed is not None and phase_expired(observed,time.time(),seconds)) or (observed is None and time.monotonic()-observed_start>600):raise RuntimeError('EXTERNAL_WORKER_OBSERVATION_TIMEOUT_NO_RESTART')
       time.sleep(.02 if segmented and (not bootstrap_done or host_phase.startswith('segmented-host-')) else .05)
-     if job.returncode:raise RuntimeError('EXTERNAL_NATIVE_RANK_FAILED '+str(rank))
+     if job.returncode:raise _native_rank_failure('EXTERNAL_NATIVE_RANK_FAILED',rank,job,log.name)
     finally:
      if job is not None and job.poll() is None:
       job.terminate()
