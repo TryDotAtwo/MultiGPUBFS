@@ -5,6 +5,10 @@ import hashlib
 import io
 import json
 import re
+import sqlite3
+import struct
+import tempfile
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -453,8 +457,6 @@ def _extends_path_coverage(old, new):
         != {length: count for length, count in after.items() if length <= previous_end}
     ):
         return False
-    # An unfinished length can contain a different subset in each run. Its
-    # emitted walks are covered once the replacement completes that length.
     return all(length <= completed and after.get(length, 0) >= count for length, count in before.items())
 
 
@@ -540,7 +542,73 @@ def _check_manifest(hub, pointer, query):
     if (definition.digest() != query["graph_sha256"] or definition.start != query["start_state"]
             or _digest(_json(definition.action)) != query["generators_sha256"]):
         raise ValueError("path manifest graph does not match the query")
-    return {key: pointer[key] for key in ("repo_id", "revision", "path", "sha256")}, parts
+    return {key: pointer[key] for key in ("repo_id", "revision", "path", "sha256")}, parts, definition.generator_count
+
+
+def _path_words(hub, pointer, parts, staged_files, query, generator_count, through=None):
+    import pyarrow.dataset as ds
+
+    counts = {entry["length"]: int(entry["count"]) for entry in query["counts"]
+              if through is None or entry["length"] <= through}
+    columns = ["length", "target_index", "generator_ids"]
+    predicate = None if through is None else ds.field("length") <= through
+    for part in parts:
+        path = part["path"]
+        file = (staged_files[path].payload if staged_files is not None else
+                hub.get(path, pointer["revision"], pointer["repo_id"]))
+        batches = ds.dataset(file, format="parquet").to_batches(
+            columns=columns, filter=predicate, batch_size=1024,
+            batch_readahead=1, fragment_readahead=1, use_threads=False,
+        )
+        for batch in batches:
+            for length, target, labels in zip(*(column.to_pylist() for column in batch.columns)):
+                if (type(length) is not int or type(target) is not int or not 0 <= target < len(query["targets"])
+                        or not isinstance(labels, list) or length != len(labels)
+                        or any(type(label) is not int or not 0 <= label < generator_count for label in labels)
+                        or counts.get(length, 0) <= 0):
+                    raise ValueError("path rows are inconsistent with their receipt or generator IDs")
+                counts[length] -= 1
+                yield length, target, struct.pack(f"<{length}i", *labels)
+    if any(counts.values()):
+        raise ValueError("path rows are inconsistent with their per-length counts")
+
+
+def _verify_path_extension(hub, previous, old, pointer, parts, staged_files, new, generator_count):
+    remaining = _part_count(old)
+    if not remaining:
+        return
+    previous, old_parts, _ = _check_manifest(hub, previous, old)
+    previous_end = old["completed_through_length"]
+    last_emitted = max(entry["length"] for entry in old["counts"] if int(entry["count"]))
+    overlap = max(last_emitted, previous_end if previous_end is not None else 0)
+    with tempfile.TemporaryDirectory(prefix="mgbfs-atlas-overlap-") as scratch, closing(
+        sqlite3.connect(Path(scratch) / "paths.sqlite")
+    ) as rows:
+        rows.execute("CREATE TABLE routes(length INTEGER, target INTEGER, word BLOB, old INTEGER, "
+                     "PRIMARY KEY(length, target, word)) WITHOUT ROWID")
+        try:
+            rows.executemany("INSERT INTO routes VALUES (?, ?, ?, 1)",
+                             _path_words(hub, previous, old_parts, None, old, generator_count))
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("published path evidence contains duplicate routes") from exc
+        for route in _path_words(hub, pointer, parts, staged_files, new, generator_count, through=overlap):
+            if previous_end is not None and route[0] <= previous_end:
+                # A completed length must contain exactly the same words.
+                matched = rows.execute("DELETE FROM routes WHERE (length, target, word) = (?, ?, ?)", route).rowcount
+                if not matched:
+                    raise ValueError("path result does not extend the published completed coverage")
+            else:
+                # A previously unfinished length can add words, but must retain every published word.
+                matched = rows.execute("UPDATE routes SET old=0 WHERE (length, target, word) = (?, ?, ?) AND old=1",
+                                       route).rowcount
+                if not matched:
+                    try:
+                        rows.execute("INSERT INTO routes VALUES (?, ?, ?, 0)", route)
+                    except sqlite3.IntegrityError as exc:
+                        raise ValueError("replacement path evidence contains duplicate routes") from exc
+            remaining -= matched
+        if remaining:
+            raise ValueError("path result does not extend the published coverage: previously emitted routes are missing")
 
 
 def _path_schema(pa):
@@ -591,8 +659,9 @@ def _publish_paths(hub, output, raw, report, graph, definition, author, manifest
     staged_files = None
     if manifest is None:
         manifest, parts, staged_files = _local_manifest(hub, output, raw, report, query, definition, author)
+        generator_count = definition.generator_count
     else:
-        manifest, parts = _check_manifest(hub, manifest, query)
+        manifest, parts, generator_count = _check_manifest(hub, manifest, query)
     fingerprint = _digest(_json({
         "query": {key: query[key] for key in (
             "query_id", "status", "targets", "d_min", "max_length", "counts", "completed_through_length",
@@ -605,7 +674,10 @@ def _publish_paths(hub, output, raw, report, graph, definition, author, manifest
         "manifest_path": manifest["path"], "manifest_sha256": manifest["sha256"],
     }
 
+    verified_previous = None
+
     def prepare(revision, inspect_only=False):
+        nonlocal verified_previous
         card = _path_card(hub.get("README.md", revision).read_bytes())
         files = {"README.md": card} if card is not None else {}
         if _PATH_INDEX in hub.files([_PATH_INDEX], revision):
@@ -628,6 +700,12 @@ def _publish_paths(hub, output, raw, report, graph, definition, author, manifest
                 raise ValueError("Atlas already contains a different terminal result for this path query")
             if not _extends_path_coverage(old, row):
                 raise ValueError("path result does not extend the published completed coverage")
+            previous = {key: old[f"manifest_{key}"] for key in ("revision", "path", "sha256")}
+            previous["repo_id"] = old["manifest_repo"]
+            previous_result = previous, old["result_sha256"]
+            if verified_previous != previous_result:
+                _verify_path_extension(hub, previous, old, manifest, parts, staged_files, row, generator_count)
+                verified_previous = previous_result
             row["case_id"] = old["case_id"]
             rows[i] = row
         else:
@@ -661,7 +739,8 @@ def publish(result, *, token, author, repo_id=DEFAULT_REPO, include_incomplete=F
     A path result can reference an externally staged schema-1 dataset manifest
     by supplying its repo_id, revision (commit SHA), path and sha256.
     Path query identity includes target order, since artifact rows use target indices.
-    Publishing a different partial result requires additional completed coverage.
+    Publishing a different partial result requires additional completed coverage
+    and must retain every previously published route.
     A legacy run directory can supply its missing graph metadata by keyword.
     The default case ID includes the exact graph digest for custom actions or
     starts. Canonical Atlas LRX and Rapaport M2 cases retain their historical IDs.

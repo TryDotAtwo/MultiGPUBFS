@@ -325,19 +325,23 @@ def test_concurrent_path_writers_preserve_ordered_target_identity(tmp_path):
 
 def test_incomplete_path_replacement_requires_a_longer_consistent_prefix(tmp_path):
     hub = LocalHub(tmp_path / "cache")
-    before, shallower, conflicting, better = (tmp_path / name for name in ("before", "short", "changed", "better"))
+    before, shallower, conflicting, duplicate, missing, better = (
+        tmp_path / name for name in ("before", "short", "changed", "duplicate", "missing", "better")
+    )
     two = [[0], [1]]
     deeper = list(product(range(2), repeat=3))
     paths(before, status="INCOMPLETE", extra=4, completed=2, sequences=two + deeper[:1])
     paths(shallower, status="INCOMPLETE", extra=4, completed=1, sequences=two)
     paths(conflicting, status="INCOMPLETE", extra=4, completed=3, sequences=[[0]] + deeper)
+    paths(duplicate, status="INCOMPLETE", extra=4, completed=3, sequences=[[0], [0]] + deeper)
+    paths(missing, status="INCOMPLETE", extra=4, completed=3, sequences=two + deeper[1:])
     paths(better, status="INCOMPLETE", extra=4, completed=3, sequences=two + deeper)
 
     def publish_partial(output, **kwargs):
         return publish(output, token=False, author="Ivan", api=hub, include_incomplete=True, **kwargs)
 
     initial = publish_partial(before, case_id="keep-case-id")
-    for rejected in (shallower, conflicting):
+    for rejected in (shallower, conflicting, duplicate, missing):
         with pytest.raises(ValueError, match="does not extend"):
             publish_partial(rejected)
         assert hub.head == initial.revision
@@ -352,6 +356,32 @@ def test_incomplete_path_replacement_requires_a_longer_consistent_prefix(tmp_pat
         publish_partial(before)
     assert publish_partial(better) == updated
     assert len(hub.commits) == 4
+
+
+def test_path_replacement_rechecks_newly_published_prefix_after_a_conflict(tmp_path):
+    hub = LocalHub(tmp_path / "cache")
+    before, competing, candidate = (tmp_path / name for name in ("before", "competing", "candidate"))
+    shorter = [[0], [1]] + list(product(range(2), repeat=3))
+    last = list(product(range(2), repeat=5))
+    paths(before, status="INCOMPLETE", extra=4, completed=3, sequences=shorter)
+    paths(competing, status="INCOMPLETE", extra=4, completed=4, sequences=shorter + last[:1])
+    paths(candidate, extra=4, sequences=shorter + last[1:])
+
+    def publish_partial(output):
+        return publish(output, token=False, author="Ivan", api=hub, include_incomplete=True)
+
+    initial = publish_partial(before)
+    winners = []
+    hub.before_path_index = lambda: winners.append(publish_partial(competing))
+    with pytest.raises(ValueError, match="previously emitted routes are missing"):
+        publish_partial(candidate)
+
+    winner, = winners
+    assert hub.head == winner.revision
+    assert winner.query_id == initial.query_id
+    row, = from_bytes(hub.snapshots[hub.head]["path-queries.parquet"]).to_pylist()
+    assert row["completed_through_length"] == 4
+    assert row["counts"][-1] == {"length": 5, "count": "1"}
 
 
 def test_publish_reads_the_path_producer_receipt(tmp_path, monkeypatch):
