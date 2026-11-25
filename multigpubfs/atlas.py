@@ -8,7 +8,7 @@ import re
 import sqlite3
 import struct
 import tempfile
-from contextlib import closing
+from contextlib import ExitStack, closing
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -588,51 +588,36 @@ def _path_rows(hub, pointer, parts, staged_files, remote_items, query, generator
 
 
 def _word_key(length, target, labels):
-    return length, target, struct.pack(f"<{length}i", *labels)
+    return length, struct.pack(f"<{length}i", *labels), target
 
 
-def _verify_path_extension(hub, previous, old, current_rows, generator_count):
-    remaining = _part_count(old)
-    if not remaining:
-        for _ in current_rows:
-            pass
+def _index_path_rows(resources, evidence):
+    scratch = resources.enter_context(tempfile.TemporaryDirectory(prefix="mgbfs-atlas-paths-"))
+    rows = resources.enter_context(closing(sqlite3.connect(Path(scratch) / "paths.sqlite")))
+    rows.execute("PRAGMA journal_mode=OFF")
+    rows.execute("CREATE TABLE routes(length INTEGER, word BLOB, target INTEGER, matched INTEGER, "
+                 "PRIMARY KEY(length, word)) WITHOUT ROWID")
+    try:
+        with closing(evidence) as current:
+            rows.executemany("INSERT INTO routes VALUES (?, ?, ?, 0)", (_word_key(*route) for route in current))
+    except sqlite3.IntegrityError as exc:
+        raise ValueError("path result does not extend exact coverage: path evidence contains duplicate routes") from exc
+    return rows
+
+
+def _verify_path_extension(hub, previous, old, rows, generator_count, comparison):
+    if not _part_count(old):
         return
     previous, old_parts, _, old_items = _check_manifest(hub, previous, old)
-    previous_end = old["completed_through_length"]
-    last_emitted = max(entry["length"] for entry in old["counts"] if int(entry["count"]))
-    overlap = max(last_emitted, previous_end if previous_end is not None else 0)
-    with tempfile.TemporaryDirectory(prefix="mgbfs-atlas-overlap-") as scratch, closing(
-        sqlite3.connect(Path(scratch) / "paths.sqlite")
-    ) as rows:
-        rows.execute("CREATE TABLE routes(length INTEGER, target INTEGER, word BLOB, old INTEGER, "
-                     "PRIMARY KEY(length, target, word)) WITHOUT ROWID")
-        try:
-            rows.executemany("INSERT INTO routes VALUES (?, ?, ?, 1)",
-                             (_word_key(*route) for route in _path_rows(
-                                 hub, previous, old_parts, None, old_items, old, generator_count)))
-        except sqlite3.IntegrityError as exc:
-            raise ValueError("published path evidence contains duplicate routes") from exc
-        for length, target, labels in current_rows:
-            if length > overlap:
-                continue
-            route = _word_key(length, target, labels)
-            if previous_end is not None and length <= previous_end:
-                # A completed length must contain exactly the same words.
-                matched = rows.execute("DELETE FROM routes WHERE (length, target, word) = (?, ?, ?)", route).rowcount
-                if not matched:
-                    raise ValueError("path result does not extend the published completed coverage")
-            else:
-                # A previously unfinished length can add words, but must retain every published word.
-                matched = rows.execute("UPDATE routes SET old=0 WHERE (length, target, word) = (?, ?, ?) AND old=1",
-                                       route).rowcount
-                if not matched:
-                    try:
-                        rows.execute("INSERT INTO routes VALUES (?, ?, ?, 0)", route)
-                    except sqlite3.IntegrityError as exc:
-                        raise ValueError("replacement path evidence contains duplicate routes") from exc
-            remaining -= matched
-        if remaining:
-            raise ValueError("path result does not extend the published coverage: previously emitted routes are missing")
+    # _extends_path_coverage already requires equal counts at completed lengths.
+    # Each previous word must match a distinct row with the same target.
+    with closing(_path_rows(hub, previous, old_parts, None, old_items, old, generator_count)) as evidence:
+        for route in evidence:
+            matched = rows.execute("UPDATE routes SET matched=? WHERE (length, word, target) = (?, ?, ?) AND matched<>?",
+                                   (comparison, *_word_key(*route), comparison)).rowcount
+            if not matched:
+                raise ValueError("path result does not extend the published coverage: "
+                                 "previously emitted routes are missing or duplicated")
 
 
 def _path_schema(pa):
@@ -699,14 +684,21 @@ def _publish_paths(hub, output, raw, report, graph, definition, author, manifest
         "manifest_path": manifest["path"], "manifest_sha256": manifest["sha256"],
     }
 
-    verified_current = False
+    resources = ExitStack()
+    route_index = None
     verified_previous = None
+    comparison = 0
 
-    def current_rows():
-        return _path_rows(hub, manifest, parts, staged_files, remote_items, query, generator_count)
+    def index_current():
+        nonlocal route_index
+        if route_index is None:
+            route_index = _index_path_rows(
+                resources, _path_rows(hub, manifest, parts, staged_files, remote_items, query, generator_count),
+            )
+        return route_index
 
     def prepare(revision, inspect_only=False):
-        nonlocal verified_current, verified_previous
+        nonlocal comparison, verified_previous
         card = _path_card(hub.get("README.md", revision).read_bytes())
         files = {"README.md": card} if card is not None else {}
         if _PATH_INDEX in hub.files([_PATH_INDEX], revision):
@@ -733,32 +725,29 @@ def _publish_paths(hub, output, raw, report, graph, definition, author, manifest
             previous["repo_id"] = old["manifest_repo"]
             previous_result = previous, old["result_sha256"]
             if verified_previous != previous_result:
-                with closing(current_rows()) as evidence:
-                    _verify_path_extension(hub, previous, old, evidence, generator_count)
-                verified_current = True
+                comparison += 1
+                _verify_path_extension(hub, previous, old, index_current(), generator_count, comparison)
                 verified_previous = previous_result
             row["case_id"] = old["case_id"]
             rows[i] = row
         else:
             rows.append(row)
-        if not verified_current:
-            for _ in current_rows():
-                pass
-            verified_current = True
+        index_current()
         if inspect_only:
             return None
         files[_PATH_INDEX] = _parquet(pa.Table.from_pylist(rows, schema=schema), row_group_size=1)
         return files
 
-    if staged_files is not None:
-        head = hub.head()
-        pending = prepare(head, inspect_only=True)
-        if pending == {}:
-            return _publication(hub, row["case_id"], head, query["query_id"])
-        if pending is None:
-            row["manifest_revision"] = hub.stage(staged_files)
-    revision = hub.commit(prepare, "Index MultiGPUBFS path query")
-    return _publication(hub, row["case_id"], revision, query["query_id"])
+    with resources:
+        if staged_files is not None:
+            head = hub.head()
+            pending = prepare(head, inspect_only=True)
+            if pending == {}:
+                return _publication(hub, row["case_id"], head, query["query_id"])
+            if pending is None:
+                row["manifest_revision"] = hub.stage(staged_files)
+        revision = hub.commit(prepare, "Index MultiGPUBFS path query")
+        return _publication(hub, row["case_id"], revision, query["query_id"])
 
 
 def _publication(hub, case_id, revision, query_id=None):

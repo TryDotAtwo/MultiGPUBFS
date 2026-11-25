@@ -439,6 +439,47 @@ def test_path_replacement_rechecks_newly_published_prefix_after_a_conflict(tmp_p
     assert row["counts"][-1] == {"length": 5, "count": "1"}
 
 
+def test_concurrent_terminal_proposal_rejects_duplicates_at_a_new_length(tmp_path):
+    hub = LocalHub(tmp_path / "cache")
+    initial, competing, duplicate, exact = (
+        tmp_path / name for name in ("initial", "competing", "duplicate", "exact")
+    )
+    first_words = [[0], [1]]
+    all_words = list(product(range(2), repeat=3))
+    paths(initial, status="INCOMPLETE", extra=2, completed=1, sequences=first_words)
+    paths(competing, status="INCOMPLETE", extra=2, completed=2, sequences=first_words + all_words[:1])
+    paths(duplicate, extra=2, sequences=first_words + all_words[:1] * len(all_words))
+    paths(exact, extra=2, sequences=first_words + all_words)
+    first = publish(initial, token=False, author="Ivan", api=hub, include_incomplete=True)
+    competitors = []
+
+    def publish_competitors():
+        before = hub.head
+        with pytest.raises(ValueError, match="duplicate routes"):
+            publish(duplicate, token=False, author="Ivan", api=hub)
+        assert hub.head == before
+        competitors.append(publish(competing, token=False, author="Ivan", api=hub, include_incomplete=True))
+
+    hub.before_path_index = publish_competitors
+    terminal = publish(exact, token=False, author="Ivan", api=hub)
+    intermediate, = competitors
+    assert first.query_id == intermediate.query_id == terminal.query_id
+    assert intermediate.revision != terminal.revision == hub.head
+
+    row, = from_bytes(hub.snapshots[terminal.revision]["path-queries.parquet"]).to_pylist()
+    assert row["status"] == "COMPLETE" and row["completed_through_length"] == 3
+    staged = hub.snapshots[row["manifest_revision"]]
+    body = staged[row["manifest_path"]]
+    assert sha(body) == row["manifest_sha256"]
+    part, = json.loads(body)["parts"]
+    raw = staged[part["path"]]
+    assert sha(raw) == part["sha256"]
+    records = from_bytes(raw).to_pylist()
+    assert Counter(tuple(record["generator_ids"]) for record in records) == Counter(
+        map(tuple, first_words + all_words)
+    )
+
+
 def test_publish_reads_the_path_producer_receipt(tmp_path, monkeypatch):
     torch = pytest.importorskip("torch")
     from multigpubfs import path_search
