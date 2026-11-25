@@ -15,7 +15,9 @@ permissions:
 jobs:
   package:
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    # Match the native components build. Compiling the universal CUDA library
+    # can take more than 45 minutes before wheel assembly and installation.
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
