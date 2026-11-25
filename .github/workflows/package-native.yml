@@ -10,8 +10,13 @@ on:
         description: Optional immutable portable native release (Python-only repack)
         required: false
         default: ""
+      reuse_package_run:
+        description: Optional successful package-native Actions run (Python-only repack)
+        required: false
+        default: ""
 permissions:
   contents: read
+  actions: read
 jobs:
   package:
     runs-on: ubuntu-22.04
@@ -23,11 +28,22 @@ jobs:
         with:
           persist-credentials: false
       - name: Prepare packaging tools
+        env:
+          REUSE_RELEASE: ${{ inputs.reuse_release }}
+          REUSE_RUN: ${{ inputs.reuse_package_run }}
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y patchelf cmake ninja-build g++
-          rustup toolchain install 1.75.0 --profile minimal
-          python3 -m pip install build wheel
+          if [[ -n "$REUSE_RELEASE" && -n "$REUSE_RUN" ]]; then
+            echo "Choose one packaging input."
+            exit 1
+          fi
+          if [[ -z "$REUSE_RUN" ]]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y patchelf cmake ninja-build g++
+            rustup toolchain install 1.75.0 --profile minimal
+            python3 -m pip install build wheel
+          else
+            python3 -m pip install wheel
+          fi
       - name: Check private runtime contracts
         run: python3 -m unittest discover -s tests -p test_private_runtime_distribution.py
       - name: Check certified workload bounds
@@ -39,14 +55,40 @@ jobs:
       - name: Check extended diagnostic evidence contracts
         run: python3 -m unittest discover -s tests -p test_extended_diagnostics.py
       - name: Build portable native binaries on Ubuntu 22.04
-        if: inputs.reuse_release == ''
+        if: inputs.reuse_release == '' && inputs.reuse_package_run == ''
         run: python3 scripts/build_portable_native.py
       - name: Reuse checked portable native artifacts for Python-only updates
         if: inputs.reuse_release != ''
         env:
           REUSE_RELEASE: ${{ inputs.reuse_release }}
         run: python3 scripts/reuse_portable_native.py "$REUSE_RELEASE"
+      - name: Repack a checked Actions wheel with unchanged native parts
+        shell: bash
+        if: inputs.reuse_package_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_RUN: ${{ inputs.reuse_package_run }}
+        run: |
+          [[ "$REUSE_RUN" =~ ^[0-9]+$ ]]
+          source="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$REUSE_RUN" |
+            jq -er --arg repo "$GITHUB_REPOSITORY" '
+              select(.path == ".github/workflows/package-native.yml" and .conclusion == "success"
+                     and .head_repository.full_name == $repo)
+              | .head_sha | select(test("^[0-9a-f]{40}$"))
+            ')"
+          if ! git cat-file -e "$source^{commit}"; then
+            git fetch --no-tags --depth=1 origin "$source"
+          fi
+          if ! git diff --quiet "$source" HEAD -- Cargo.toml Cargo.lock crates cuda; then
+            echo "Native sources changed since the package run."
+            exit 1
+          fi
+          gh run download "$REUSE_RUN" --repo "$GITHUB_REPOSITORY" --name native-pip-wheel \
+            --dir "$RUNNER_TEMP/mgbfs-package-source"
+          python3 scripts/reuse_portable_native.py --artifact-dir "$RUNNER_TEMP/mgbfs-package-source" \
+            --source "$source" --output dist-native
       - name: Assemble wheel with private redistributables
+        if: inputs.reuse_package_run == ''
         run: |
           python3 scripts/package_github_wheel.py --output dist-native \
             --binary /tmp/mgbfs-portable/target/release/mgbfs \
@@ -54,7 +96,7 @@ jobs:
             --native-manifest /tmp/mgbfs-portable/native-manifest.json
       - name: Test clean Linux pip install without setup script
         env:
-          FRESH_NATIVE_BUILD: ${{ inputs.reuse_release == '' && '1' || '0' }}
+          REQUIRE_SEGMENTED_ABI: ${{ inputs.reuse_release == '' && '1' || '0' }}
         run: |
           python3 -m venv /tmp/pip-native-clean
           /tmp/pip-native-clean/bin/python -m pip install dist-native/*.whl
@@ -69,11 +111,14 @@ jobs:
           root=Path(native).parents[1]
           manifest=json.loads((root/'manifest.json').read_text())
           assert manifest['bundled_runtime']
+          assert manifest['package_source_commit'] == os.environ['GITHUB_SHA']
+          package = json.loads((root.parent/'_package_info.json').read_text())
+          assert package['source_commit'] == os.environ['GITHUB_SHA']
           result=subprocess.run(['ldd',native],env=env,text=True,capture_output=True,check=True)
           missing=[line for line in result.stdout.splitlines() if 'not found' in line and 'libcuda.so.1' not in line]
           assert not missing, missing
           assert '/tmp/pip-native-clean/' in result.stdout
-          if os.environ['FRESH_NATIVE_BUILD'] == '1':
+          if os.environ['REQUIRE_SEGMENTED_ABI'] == '1':
               library=root/'lib/libmgbfs_cuda.so'
               assert any(line.split()[:3] == ['libmgbfs_cuda.so', '=>', str(library)]
                          for line in result.stdout.splitlines()), result.stdout
