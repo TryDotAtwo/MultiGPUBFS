@@ -10,11 +10,28 @@ from multigpubfs import external_pilots
 from multigpubfs.network_control import ControlStore
 
 
-def test_delayed_launch_does_not_extend_peer_trial_past_coordinator(tmp_path, monkeypatch):
+def test_delayed_launch_and_reap_ack_respect_coordinator_deadline(tmp_path, monkeypatch):
     first_trial = "segmented-profile/trial-0"
-    delay = 0.90
+    delay = 0.82
+    ack_outage = 0.88
+
+    class DelayedCoordinator(ControlStore):
+        def try_get(self, key, **kwargs):
+            value = super().try_get(key, **kwargs)
+            if key == f"{first_trial}/ready/" and value is not None:
+                time.sleep(0.45)
+            return value
 
     class DelayedPeer(ControlStore):
+        def _request(self, path, key, value=None, *, timeout=3):
+            if path == "/put" and key == f"{first_trial}/reaped/1":
+                now = time.perf_counter()
+                if not hasattr(self, "ack_available_at"):
+                    self.ack_available_at = now + ack_outage
+                if now < self.ack_available_at:
+                    raise OSError("transient ACK path outage")
+            return super()._request(path, key, value, timeout=timeout)
+
         def await_value(self, key, **kwargs):
             request = super().await_value(key, **kwargs)
             if key == f"{first_trial}/launch" and request is not None:
@@ -33,7 +50,7 @@ def test_delayed_launch_does_not_extend_peer_trial_past_coordinator(tmp_path, mo
     with socket.socket() as reserved:
         reserved.bind(("127.0.0.1", 0))
         port = reserved.getsockname()[1]
-    coordinator = ControlStore("127.0.0.1", port, 0, "delayed-pilot", 7)
+    coordinator = DelayedCoordinator("127.0.0.1", port, 0, "delayed-pilot", 7)
     peer = DelayedPeer("127.0.0.1", port, 1, "delayed-pilot", 7)
     baseline = {"plan": {"batch": 64}}
     config = {"graph_digest": "fixture", "additional_reserve_bytes": 0}

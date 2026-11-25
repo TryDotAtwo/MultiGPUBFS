@@ -91,8 +91,9 @@ def run_batch_trials(store, rank, world, baseline, startup_deadline, admit_cold,
                 break
             local_end = min(watchdog, ready_at + trial["lease_seconds"])
             report = launch(label, trial["config"], local_end) if time.perf_counter() < local_end else None
-            acknowledge_end = min(watchdog, max(time.perf_counter(), local_end) + _CLEANUP_SECONDS)
-            store.put(f"{label}/reaped/{rank}", report, deadline=acknowledge_end)
+            # Our conservative child cutoff can precede the coordinator's by
+            # a round trip or more. Retry the immutable ACK while it can be read.
+            store.put(f"{label}/reaped/{rank}", report, deadline=watchdog)
         selection = store.get(selection_key, deadline=watchdog)
         return selection["admission"], selection["profile"]
 
