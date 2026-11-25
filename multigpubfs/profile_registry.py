@@ -21,6 +21,7 @@ from .workload_geometry import coxeter_frontier_bound
 
 SCHEMA = 2
 MAX_BYTES = 4 << 20
+_ACTIVATION_FILE = "active.json"
 _BACKENDS = {
     "EXPERIMENTAL_SEGMENTED24": "segmented24",
     "EXPERIMENTAL_PERMUTATION_BITMAP": "permutation_bitmap",
@@ -398,6 +399,22 @@ def _github_source(url, pin):
     return fields if release_file else None
 
 
+def registry_cache_dir(env=None):
+    return artifact_path("profile-registry", env=env, override="MGBFS_PROFILE_REGISTRY_CACHE")
+
+
+def _read_active_registry(cache_dir):
+    try:
+        saved = json.loads(_read(cache_dir / _ACTIVATION_FILE))
+        if not _mapping(saved, "source sha256") or not isinstance(saved["source"], str):
+            return None
+        if urlsplit(saved["source"]).scheme != "https":
+            return None
+        return read_profile_registry(saved["source"], sha256=saved["sha256"], cache_dir=cache_dir, offline=True)
+    except (OSError, ValueError):
+        return None
+
+
 def _download_timeout(deadline):
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -456,7 +473,7 @@ def _authenticated_release_bytes(release, sha256, deadline):
     return data
 
 
-def read_profile_registry(source, *, sha256=None, timeout=5, cache_dir=None, offline=False):
+def read_profile_registry(source, *, sha256=None, timeout=5, cache_dir=None, offline=False, _require_cache=False):
     """Read a local catalog or a GitHub object pinned to its SHA-256."""
     name = str(source)
     if "://" not in name:
@@ -465,7 +482,7 @@ def read_profile_registry(source, *, sha256=None, timeout=5, cache_dir=None, off
         raise ValueError("PROFILE_REGISTRY_SOURCE")
     release = _github_source(name, sha256)
     if cache_dir is None:
-        cache_dir = artifact_path("profile-registry", override="MGBFS_PROFILE_REGISTRY_CACHE")
+        cache_dir = registry_cache_dir()
     cache = Path(cache_dir) / (sha256 + ".json")
     try:
         return _decode(_read(cache), sha256)
@@ -489,6 +506,8 @@ def read_profile_registry(source, *, sha256=None, timeout=5, cache_dir=None, off
     try:
         _write_bytes(cache, data)
     except OSError:
+        if _require_cache:
+            raise
         pass  # Online reads can still succeed when the optional cache is unwritable.
     return result
 
@@ -859,7 +878,7 @@ def main(argv=None):
         export.add_argument("--" + field, required=True)
     export.add_argument("--topology", required=True, help="nvidia-smi topo -m output or rank metadata JSON")
     load = commands.add_parser("import")
-    load.add_argument("source")
+    load.add_argument("source", nargs="?")
     load.add_argument("--sha256")
     load.add_argument("--cache-dir")
     load.add_argument("--timeout", type=float, default=5,
@@ -867,6 +886,7 @@ def main(argv=None):
     load.add_argument("--offline", action="store_true")
     destination = load.add_mutually_exclusive_group(required=True)
     destination.add_argument("--output")
+    destination.add_argument("--activate", action="store_true", help="Use this pinned GitHub catalog in future sessions")
     destination.add_argument("--stdout", action="store_true", help=argparse.SUPPRESS)
     verify = commands.add_parser("verify-publication")
     verify.add_argument("--registry", required=True)
@@ -888,16 +908,29 @@ def main(argv=None):
                         topology, args.baseline, args.capacity,
                         args.registry, args.evidence_dir)
     elif args.command == "import":
+        cache_dir = Path(args.cache_dir) if args.cache_dir is not None else registry_cache_dir()
+        if args.source is None and not args.stdout:
+            load.error("a catalog source is required")
+
         def load_catalog():
+            if args.source is None:
+                return _read_active_registry(cache_dir)
             return read_profile_registry(args.source, sha256=args.sha256, timeout=args.timeout,
-                                         cache_dir=args.cache_dir, offline=args.offline)
+                                         cache_dir=cache_dir, offline=args.offline, _require_cache=args.activate)
 
         if args.stdout:
             try:
-                data = _registry_bytes(load_catalog())
+                catalog = load_catalog()
+                data = _registry_bytes(catalog) if catalog is not None else b"null"
             except (OSError, ValueError, TypeError) as error:
                 data = _canonical({"error": type(error).__name__})
             sys.stdout.buffer.write(data)
+        elif args.activate:
+            if urlsplit(args.source).scheme != "https":
+                load.error("--activate requires a pinned GitHub URL")
+            _github_source(args.source, args.sha256)
+            load_catalog()
+            _write_bytes(cache_dir / _ACTIVATION_FILE, _canonical({"source": args.source, "sha256": args.sha256}))
         else:
             _write_registry(args.output, load_catalog())
     elif args.command == "publish-github":

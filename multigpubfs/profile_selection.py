@@ -6,10 +6,10 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .artifact_paths import artifact_path
 from .memory_admission import TraversalMemory, bounded_hash_available
 from .process_control import ProfileBudgetExpired, profile_budget, profile_timeout, query
 
@@ -28,7 +28,9 @@ def registry_source(source, sha256, env):
         source = env.get("MGBFS_PROFILE_REGISTRY")
         if sha256 is None:
             sha256 = env.get("MGBFS_PROFILE_REGISTRY_SHA256")
-    return {"source": os.fspath(source), "sha256": sha256} if source is not None else None
+    if source is not None:
+        return {"source": os.fspath(source), "sha256": sha256}
+    return {"source": None, "sha256": None} if sha256 is None else None
 
 
 def local_hardware():
@@ -276,15 +278,17 @@ def registry_run_receipt(status, expected, report):
 
 
 def _load_catalog(spec, env):
+    from .profile_registry import registry_cache_dir
+
     source, digest = spec["source"], spec["sha256"]
-    cache = artifact_path("profile-registry", env=env, override="MGBFS_PROFILE_REGISTRY_CACHE")
     command = [sys.executable, "-m", "multigpubfs.profile_registry", "import",
-               "--cache-dir", str(cache), "--stdout"]
+               "--cache-dir", str(registry_cache_dir(env)), "--stdout"]
     if digest is not None:
         command.extend(("--sha256", digest))
     if env.get("MGBFS_NATIVE_OFFLINE") == "1" or env.get("MGBFS_PROFILE_REGISTRY_OFFLINE") == "1":
         command.append("--offline")
-    command.extend(("--", source))
+    if source is not None:
+        command.extend(("--", source))
     # Local files and the pinned cache may also be on a stalled filesystem.
     try:
         result = subprocess.run(command, timeout=profile_timeout(5), capture_output=True)
@@ -295,8 +299,25 @@ def _load_catalog(spec, env):
     return json.loads(result.stdout)
 
 
+def load_activated_catalog(spec, env, graph):
+    """Read the saved default once, charging discovery to the optional phase."""
+    deadline = time.monotonic() + 5
+    catalog = None
+    try:
+        with profile_budget(deadline):
+            candidate = _load_catalog(spec, env)
+            if candidate is not None and candidate.get("schema") == 2:
+                digest = graph.digest()
+                if any(entry["graph_digest"] == digest for entry in candidate["entries"]):
+                    profile_timeout(5)
+                    catalog = candidate
+    except (ProfileBudgetExpired, OSError, ValueError):
+        pass
+    return catalog, max(0.0, deadline - time.monotonic())
+
+
 def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadline, *,
-                           hardware, inventory, packet_address):
+                           hardware, inventory, packet_address, catalog=None):
     from .native_distribution import runtime_identity
     from .profile_registry import _NCCL_RUNTIME, hardware_key, matching_profiles
 
@@ -305,8 +326,11 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
         return None, None
     try:
         with profile_budget(deadline):
-            catalog = _load_catalog(spec, env)
+            if catalog is None:
+                catalog = _load_catalog(spec, env)
             profile_timeout(5)
+            if catalog is None:
+                return None, None
             if "error" in catalog:
                 return None, {"status": "REGISTRY_UNAVAILABLE", "reason": catalog["error"]}
             if not catalog["entries"] or catalog["schema"] < 2:

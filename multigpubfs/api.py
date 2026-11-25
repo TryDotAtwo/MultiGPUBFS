@@ -392,9 +392,15 @@ class BfsSession:
                 env.pop(_PATH_SEGMENTED_NEAREST, None)
                 env.pop(_PATH_SEGMENTED_WINDOW, None)
             devices = self._native_devices(native, env)
-            from .profile_selection import local_profile_hardware, registry_run_receipt, registry_source, select_registry_recipe
+            from .profile_selection import (load_activated_catalog, local_profile_hardware, registry_run_receipt,
+                                            registry_source, select_registry_recipe)
 
             registry = registry_source(self._profile_registry, self._profile_registry_sha256, env) if not manual else None
+            catalog = discovery_budget = None
+            if registry is not None and registry["source"] is None:
+                catalog, discovery_budget = load_activated_catalog(registry, env, graph)
+                if catalog is None:
+                    registry = None
             deadline = None
             inventory = expected = None
             recipe, profile_status = None, None
@@ -402,7 +408,7 @@ class BfsSession:
                 capabilities = _require_memory_backend(native, env, "segmented24")
                 # The worker inventory is required for native memory admission.
                 inventory = self._live_inventory(native, devices, env)
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + (5 if discovery_budget is None else discovery_budget)
 
                 def hardware():
                     identity = local_profile_hardware(devices, env)
@@ -411,6 +417,7 @@ class BfsSession:
                 recipe, profile_status = select_registry_recipe(
                     registry, graph, preset, native, env, capabilities, deadline,
                     hardware=hardware, inventory=lambda: inventory, packet_address=self._local_packet_address,
+                    catalog=catalog,
                 )
             launch_preset = preset
             if recipe is None:
@@ -431,6 +438,8 @@ class BfsSession:
             tuning = {"capacity_slowdown_limit": 4.0}
             if self._tune == "auto":
                 tuning.update(pilot_limit=3, pilot_wall_seconds=5, preserve_implicit_bitmap_banks=True)
+                if deadline is None and discovery_budget is not None:
+                    deadline = time.monotonic() + discovery_budget
                 if deadline is not None:
                     tuning["startup_deadline"] = deadline
             report = run_graph(

@@ -225,6 +225,8 @@ class Cluster:
             "env": policy_env,
             "artifacts": artifacts,
         })
+        registry = job.get("profile_registry")
+        active_catalog = None
         if rank == 0:
             peers = [self.store.get(prefix + f"preflight/{peer}") for peer in range(world)]
             if world > 1 and any(peer["artifacts"]["cuda"] is None for peer in peers):
@@ -232,10 +234,17 @@ class Cluster:
             if any(peer["artifacts"] != artifacts for peer in peers):
                 raise RuntimeError("EXTERNAL_GRAPH_NATIVE_OR_PARAMETERS_MISMATCH")
             features = sorted(set.intersection(*(set(peer["features"]) for peer in peers)))
-            self.store.put(prefix + "preflight", {
+            agreement = {
                 "strategies": sorted(set.intersection(*(set(peer["strategies"]) for peer in peers))),
                 "features": features, "env_agrees": all(peer["env"] == policy_env for peer in peers),
-            })
+            }
+            if (registry is not None and registry["source"] is None and agreement["env_agrees"]
+                    and "segmented_network_agreement_v1" in features):
+                from .profile_selection import load_activated_catalog
+
+                active_catalog, discovery_budget = load_activated_catalog(registry, env, graph)
+                agreement["profile_discovery"] = {"matched": active_catalog is not None, "budget": discovery_budget}
+            self.store.put(prefix + "preflight", agreement)
         preflight = self.store.get(prefix + "preflight")
         if not preflight["env_agrees"]:
             raise RuntimeError("CLUSTER_MEMORY_POLICY_ENV_MISMATCH")
@@ -266,7 +275,9 @@ class Cluster:
             return inventory
 
         recipe = profile_status = expected = profile_deadline = None
-        registry = job.get("profile_registry")
+        discovery = preflight.get("profile_discovery")
+        if discovery is not None and not discovery["matched"]:
+            registry = None
         if registry is not None and network:
             from .process_control import ProfileBudgetExpired, profile_budget, profile_timeout
             from .profile_selection import (RegistryRecipe, cluster_hardware, cluster_rank_hardware, registry_run_receipt,
@@ -274,7 +285,7 @@ class Cluster:
 
             # Inventory is required by either policy. Bound the optional phase separately.
             inventory = load_inventory()
-            deadline = time.monotonic() + 5
+            deadline = time.monotonic() + (5 if discovery is None else discovery["budget"])
             try:
                 with profile_budget(deadline):
                     metadata = cluster_rank_hardware(env, socket.gethostname(), device=inventory[rank]["device"])
@@ -297,6 +308,7 @@ class Cluster:
                     registry, graph, preset, native, env, capabilities, deadline,
                     hardware=hardware, inventory=load_inventory,
                     packet_address=self._packet_address if self.placement.packet_port is not None else None,
+                    catalog=active_catalog,
                 )
                 resolved = None
                 if recipe is not None:
@@ -332,6 +344,8 @@ class Cluster:
             )
         prepared = {}
         if world > 1 and network:
+            if rank == 0 and profile_deadline is None and discovery is not None and job["tune"] == "auto":
+                profile_deadline = time.monotonic() + discovery["budget"]
             if inventory is not None:
                 prepared["_external_inventory"] = inventory
             if recipe is not None:

@@ -10,6 +10,7 @@ import pytest
 
 from multigpubfs import GraphDefinition, open_session
 from multigpubfs import api, autotune, distributed_launch, generic_session, launch, native_assets, native_distribution, profile_selection
+from multigpubfs.cli import main as cli
 from multigpubfs.cluster import Cluster, Placement
 from multigpubfs.profile_registry import _path, hardware_key, local_profile_topology
 
@@ -88,6 +89,21 @@ def _native_receipt(case):
             "owner_cuts": case["cuts"], "layer_sizes": [1, 1], "graph_digest": case["graph"].digest()}
 
 
+def _activate_catalog(tmp_path, monkeypatch, case):
+    cache = tmp_path / "registry-cache"
+    url = "https://github.com/test/profiles/releases/download/v1/catalog.json"
+    monkeypatch.delenv("MGBFS_PROFILE_REGISTRY", raising=False)
+    monkeypatch.delenv("MGBFS_PROFILE_REGISTRY_SHA256", raising=False)
+    monkeypatch.setenv("MGBFS_PROFILE_REGISTRY_CACHE", str(cache))
+    monkeypatch.setattr("multigpubfs.profile_registry._public_catalog_bytes",
+                        lambda source, deadline: case["catalog"].read_bytes())
+    cli(["profiles", "import", url, "--sha256", case["pin"], "--activate"])
+    monkeypatch.setenv("MGBFS_PROFILE_REGISTRY_OFFLINE", "1")
+    activation = _path(cache / "active.json")
+    assert json.loads(activation.read_bytes()) == {"source": url, "sha256": case["pin"]}
+    return activation, _path(cache / (case["pin"] + ".json"))
+
+
 def test_local_profile_resolves_physical_slots_before_registry_lookup(monkeypatch):
     topology = "GPU2 GPU4\nGPU2 X PHB\nGPU4 PHB X"
     driver = "535.14"
@@ -153,7 +169,7 @@ def test_cluster_registry_resolves_numeric_slurm_masks(monkeypatch, registry_cas
     assert status["status"] == "LIVE_ADMITTED_REGISTRY_PROFILE"
 
 
-def test_public_session_replays_pinned_recipe_and_keeps_manual_and_fallback_paths(tmp_path, monkeypatch, registry_case):
+def test_public_session_replays_activated_recipe_and_keeps_manual_and_fallback_paths(tmp_path, monkeypatch, registry_case):
     case = registry_case
     graph, devices, inventory = case["graph"], case["devices"], case["inventory"]
     topology_calls, inventory_calls, plans, native_runs = [], [], [], []
@@ -201,8 +217,9 @@ def test_public_session_replays_pinned_recipe_and_keeps_manual_and_fallback_path
     monkeypatch.setattr(native_distribution, "runtime_identity", lambda native, env: live_runtime)
     monkeypatch.setattr(api, "run_graph", native_launch)
 
-    with open_session(devices=devices, output_root=tmp_path, profile_registry=case["catalog"],
-                      profile_registry_sha256=case["pin"]) as session:
+    activation, cached = _activate_catalog(tmp_path, monkeypatch, case)
+    activation_bytes = activation.read_bytes()
+    with open_session(devices=devices, output_root=tmp_path) as session:
         selected = session.bfs(graph)
         manual = session.bfs(graph, native_options={
             "memory_backend": "segmented24", "segment_strategy": "atomic", "shards": 1, "batch": 1,
@@ -210,8 +227,10 @@ def test_public_session_replays_pinned_recipe_and_keeps_manual_and_fallback_path
         assert (len(topology_calls), len(inventory_calls), len(plans)) == (2, 1, 1)
         live_runtime["native_sha256"] = "d" * 64
         fallback = session.bfs(graph)
+        cached.write_bytes(b"{}")
+        invalid_cache = session.bfs(graph)
 
-    admitted, explicit, default = native_runs
+    admitted, explicit, default, invalid = native_runs
     assert selected.bfs_completed and selected.layer_sizes == [1, 1]
     receipt = selected.report["session_policy"]["profile_registry"]
     assert (receipt["status"], receipt["evidence_sha256"]) == ("LIVE_ADMITTED_REGISTRY_PROFILE", case["evidence"])
@@ -235,6 +254,9 @@ def test_public_session_replays_pinned_recipe_and_keeps_manual_and_fallback_path
     assert default["autotune"] and default["segment_strategy"] == "batch"
     assert "shards" not in default and "_batch" not in default
     assert default["_profile_options"]["pilot_limit"] == 3 and "startup_deadline" in default["_profile_options"]
+    assert "profile_registry" not in invalid_cache.report["session_policy"]
+    assert invalid["autotune"] and invalid["_profile_options"]["startup_deadline"] is not None
+    assert activation.read_bytes() == activation_bytes
     assert (len(topology_calls), len(inventory_calls), len(plans)) == (4, 2, 1)
 
 
@@ -421,7 +443,11 @@ def test_cluster_coordinator_admits_one_recipe_for_all_ranks(tmp_path, monkeypat
     monkeypatch.setattr(Cluster, "inventory", lambda self, native, env, device: by_device[device])
     monkeypatch.setattr(Cluster, "_dispatch", dispatch)
 
-    session = open_session(gpus=2, profile_registry=case["catalog"], profile_registry_sha256=case["pin"])
+    if metadata_timeout:
+        session = open_session(gpus=2, profile_registry=case["catalog"], profile_registry_sha256=case["pin"])
+    else:
+        _activate_catalog(tmp_path, monkeypatch, case)
+        session = open_session(gpus=2)
     reports = peers[0].traverse(session, case["graph"], tmp_path / "cluster", "balanced", None)
     assert set(runs) == set(case["devices"])
     assert all(run["_external_inventory"] == case["inventory"] for run in runs.values())

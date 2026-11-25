@@ -59,6 +59,7 @@ def changed_python_modules(git, source, target):
     for status, raw_path in zip(entries, entries):
         path = PurePosixPath(os.fsdecode(raw_path))
         if (len(path.parts) > 1 and path.parts[0] in {"docs", "tests"}) or path.as_posix() in {
+            ".github/workflows/native-contracts.yml",
             ".github/workflows/package-native.yml",
             "scripts/reuse_portable_native.py",
         }:
