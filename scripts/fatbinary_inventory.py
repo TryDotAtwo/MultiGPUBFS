@@ -15,3 +15,20 @@ def verify_inventory(sass,ptx,native_architectures,ptx_architectures):
    missing=expected-records.get(architecture,set())
    if missing:raise RuntimeError('FATBINARY_'+kind+'_MISSING_SM_'+str(architecture)+': '+','.join(sorted(missing)))
  return {'native_module_counts':{str(x):len(native[x]) for x in native_architectures},'ptx_module_counts':{str(x):len(portable[x]) for x in ptx_architectures},'modules':sorted(expected),'scope':'cuobjdump inventory; real GPU correctness requires execution'}
+
+
+def verify_bundled_inventory(sass, ptx, native_architectures, ptx_architectures):
+    inventory = verify_inventory(sass, ptx, native_architectures, ptx_architectures)
+    # bitmap_pack4_abi.cu is host-only. The installed CLI checks its ABI.
+    pack4_modules = {"bitmap_pack4_convert", "bitmap_pack4_owner", "bitmap_pack4_route"}
+    missing = pack4_modules.difference(inventory["modules"])
+    if missing:
+        raise RuntimeError("FATBINARY_PACK4_MISSING_MODULES: " + ",".join(sorted(missing)))
+    for kind, listing, suffix, targets in (
+        ("CUBIN", sass, "cubin", native_architectures),
+        ("PTX", ptx, "ptx", ptx_architectures),
+    ):
+        unexpected = modules(listing, suffix).keys() - set(targets)
+        if unexpected:
+            raise RuntimeError(f"FATBINARY_{kind}_UNEXPECTED_TARGETS: {sorted(unexpected)}")
+    return inventory

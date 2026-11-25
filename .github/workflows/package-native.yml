@@ -46,12 +46,13 @@ jobs:
         run: python3 scripts/reuse_portable_native.py "$REUSE_RELEASE"
       - name: Assemble wheel with private redistributables
         run: |
-          if [ -f /tmp/mgbfs-portable/native-manifest.json ]; then
-            python3 scripts/package_github_wheel.py --output dist-native --binary /tmp/mgbfs-portable/target/release/mgbfs --library /tmp/mgbfs-portable/native-build/libmgbfs_cuda.so --native-manifest /tmp/mgbfs-portable/native-manifest.json
-          else
-            python3 scripts/package_github_wheel.py --output dist-native --binary /tmp/mgbfs-portable/target/release/mgbfs --library /tmp/mgbfs-portable/native-build/libmgbfs_cuda.so
-          fi
+          python3 scripts/package_github_wheel.py --output dist-native \
+            --binary /tmp/mgbfs-portable/target/release/mgbfs \
+            --library /tmp/mgbfs-portable/native-build/libmgbfs_cuda.so \
+            --native-manifest /tmp/mgbfs-portable/native-manifest.json
       - name: Test clean Linux pip install without setup script
+        env:
+          FRESH_NATIVE_BUILD: ${{ inputs.reuse_release == '' && '1' || '0' }}
         run: |
           python3 -m venv /tmp/pip-native-clean
           /tmp/pip-native-clean/bin/python -m pip install dist-native/*.whl
@@ -63,12 +64,32 @@ jobs:
           native, env = native_runtime()
           assert os.access(native, os.X_OK), 'Wheel must preserve executable permissions'
           assert Path(native).is_relative_to(Path('/tmp/pip-native-clean'))
-          manifest=json.loads((Path(native).parents[1]/'manifest.json').read_text())
+          root=Path(native).parents[1]
+          manifest=json.loads((root/'manifest.json').read_text())
           assert manifest['bundled_runtime']
           result=subprocess.run(['ldd',native],env=env,text=True,capture_output=True,check=True)
           missing=[line for line in result.stdout.splitlines() if 'not found' in line and 'libcuda.so.1' not in line]
           assert not missing, missing
           assert '/tmp/pip-native-clean/' in result.stdout
+          if os.environ['FRESH_NATIVE_BUILD'] == '1':
+              library=root/'lib/libmgbfs_cuda.so'
+              assert any(line.split()[:3] == ['libmgbfs_cuda.so', '=>', str(library)]
+                         for line in result.stdout.splitlines()), result.stdout
+              capabilities=json.loads(subprocess.check_output([native, 'key-info'], env=env, text=True))
+              assert capabilities['schema'] == 1
+              required=(
+                  'bitmap_pack4_experimental_v1',
+                  'bitmap_pack4_adaptive_v2',
+                  'permutation_bitmap_v1',
+                  'segmented_memory_presets_v1',
+                  'segmented_packet_transport_v1',
+                  'graph_path_segmented_nearest_v1',
+                  'graph_path_segmented_nearest_bidirectional_v1',
+                  'graph_path_segmented_window_v1',
+                  'graph_path_segmented_window_bidirectional_v1',
+              )
+              missing=[key for key in required if capabilities.get(key) is not True]
+              assert not missing, (missing, capabilities)
           print(result.stdout)
           print('VERIFIED_CLEAN_LINUX_PIP_INSTALL_NO_GPU')
           PY
