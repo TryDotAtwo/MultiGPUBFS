@@ -195,7 +195,7 @@ def test_public_session_replays_pinned_recipe_and_keeps_manual_and_fallback_path
 
 
 @pytest.mark.parametrize("capacity_seconds, drift", [
-    (1.0, None), (3.0, None), (3.0, "geometry"), (3.0, "preflight"), (3.0, "legacy"),
+    (1.0, None), (3.0, None), (3.0, "geometry"), (3.0, "preflight"), (3.0, "legacy"), (3.0, "nccl"),
 ])
 def test_public_presets_report_historical_bounds_for_the_replayed_recipe(
     tmp_path, monkeypatch, registry_case, capacity_seconds, drift,
@@ -222,10 +222,15 @@ def test_public_presets_report_historical_bounds_for_the_replayed_recipe(
     assert hardware(topology) != hardware(local_profile_topology(case["topology"], slots[::-1], {}))
     assert hardware(topology) != hardware(local_profile_topology(case["topology"], slots,
                                 profile_selection.nccl_profile_network({"NCCL_P2P_DISABLE": "1"})))
+    nccl_digest = "d" * 64
+    legacy_evidence = "e" * 64
     if drift != "legacy":
         entry["hardware"] = hardware(topology)
+        entry["runtime"] = dict(case["runtime"], nccl_library_sha256=nccl_digest)
     entry.update(profiles={"balanced": balanced, "max_capacity": capacity},
                  capacity_verification="LOWER_PHYSICAL_PEAK")
+    if drift == "nccl":
+        catalog["entries"].append(dict(entry, runtime=case["runtime"], evidence_sha256=legacy_evidence))
     case["catalog"].write_text(json.dumps(catalog), encoding="utf-8")
     capabilities = dict(case["capabilities"], permutation_bitmap_v1=True, bitmap_pack4_experimental_v1=True,
                         segmented_packet_transport_v1=True)
@@ -274,7 +279,12 @@ def test_public_presets_report_historical_bounds_for_the_replayed_recipe(
     monkeypatch.setattr(api.BfsSession, "_live_inventory", lambda *_: case["inventory"])
     monkeypatch.setattr(api.BfsSession, "_local_packet_address", lambda _: address)
     monkeypatch.setattr(api, "run_graph", native_launch)
-    monkeypatch.setattr(native_distribution, "runtime_identity", lambda *_: case["runtime"])
+    def identity(*_, profile_nccl=False):
+        if not profile_nccl:
+            return case["runtime"]
+        return dict(case["runtime"], nccl_library_sha256="f" * 64 if drift == "nccl" else nccl_digest)
+
+    monkeypatch.setattr(native_distribution, "runtime_identity", identity)
     monkeypatch.setattr(profile_selection, "local_profile_hardware", lambda *_: (topology, case["driver"]))
     monkeypatch.setattr(profile_selection, "query", graph_plan)
     with open_session(devices=case["devices"], output_root=tmp_path, profile_registry=case["catalog"]) as session:
@@ -296,7 +306,9 @@ def test_public_presets_report_historical_bounds_for_the_replayed_recipe(
     receipt = policy["profile_registry"]
     assert policy["preset"] == receipt["requested_preset"] == receipt["recipe_preset"] == "maxmemory"
     assert receipt["runtime_geometry"] == ("CHANGED" if drift == "geometry" else "MATCHED")
-    assert receipt["capacity_comparison"]["baseline_evidence_sha256"] == case["evidence"]
+    assert receipt["capacity_comparison"]["baseline_evidence_sha256"] == (
+        legacy_evidence if drift == "nccl" else case["evidence"]
+    )
     assert receipt["capacity_comparison"]["baseline_arm"] == ("max_capacity" if capacity_faster else "balanced")
     assert receipt["historical_ratio"] == capacity_seconds / min(capacity_seconds, balanced["bfs_seconds"])
     bound = "MEASURED_FULL_BFS_HISTORICAL_BOUND"

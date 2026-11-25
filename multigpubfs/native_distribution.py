@@ -1,5 +1,5 @@
 """Resolve an installed native bundle, with no dependency on the source checkout."""
-import hashlib,json,os,shutil,sysconfig
+import hashlib,json,os,shutil,subprocess,sys,sysconfig
 from pathlib import Path
 
 def _stream_digest(path):
@@ -74,7 +74,42 @@ def native_runtime(explicit=None):
  if binary:return binary,env
  raise RuntimeError('MGBFS_EXECUTABLE_NOT_FOUND: install a Linux CUDA native wheel or build scripts/build_native_wheel.py and install its wheel')
 
-def _runtime_identity_uncached(native,env):
+_nccl_profile_digests={}
+
+def _with_profile_nccl(identity,dependency,env):
+ # An external config or loader interposition cannot be attested by a library digest.
+ if dependency is None or 'NCCL_CONF_FILE' in env or env.get('LD_PRELOAD') or env.get('LD_AUDIT'):
+  return identity
+ paths={path for library,path,*_ in dependency['resolved_dependencies']
+        if library=='libnccl.so' or library.startswith('libnccl.so.')}
+ if len(paths)!=1:return identity
+ path=paths.pop()
+ from .autotune import _stat_identity
+ from .process_control import profile_timeout
+ stamp=_stat_identity(path)
+ if stamp is None or not 0<stamp[2]<=1<<30 or not Path(path).is_file():return identity
+ key=(path,stamp)
+ digest=_nccl_profile_digests.get(key)
+ if digest is None:
+  code="""import hashlib, sys
+digest = hashlib.sha256()
+with open(sys.argv[1], 'rb') as library:
+    for block in iter(lambda: library.read(4 << 20), b''):
+        digest.update(block)
+print(digest.hexdigest())
+"""
+  try:
+   result=subprocess.run([sys.executable,'-I','-c',code,path],capture_output=True,text=True,
+                         timeout=profile_timeout(1))
+  except (OSError,subprocess.TimeoutExpired):return identity
+  digest=result.stdout.strip()
+  if (result.returncode or len(digest)!=64 or any(c not in '0123456789abcdef' for c in digest)
+      or _stat_identity(path)!=stamp):return identity
+  if len(_nccl_profile_digests)>=8:_nccl_profile_digests.clear()
+  _nccl_profile_digests[key]=digest
+ return dict(identity,nccl_library_sha256=digest)
+
+def _runtime_identity_uncached(native,env,*,profile_nccl=False):
  """Cold provenance for the artifacts actually resolved by the launcher."""
  binary=Path(native);digest=hashlib.sha256(binary.read_bytes()).hexdigest()
  python_root=Path(__file__).resolve().parent
@@ -94,12 +129,12 @@ def _runtime_identity_uncached(native,env):
    # Package provenance applies only if the actual loader resolves its bytes.
    if dependency is not None and dependency['cuda_library_sha256']==library_digest:
     identity.update(source_commit=manifest.get('native_binary_source_commit',manifest.get('source_commit')),cuda_library_source_commit=manifest.get('cuda_library_source_commit',manifest.get('source_commit')),ptx_architectures=manifest.get('ptx_architectures'),cuda_toolkit=None if manifest.get('bundled_runtime') else manifest.get('cuda_toolkit'),architectures=manifest.get('architectures'))
- return identity
+ return _with_profile_nccl(identity,dependency,env) if profile_nccl else identity
 
 _runtime_identity_cache={}
-def runtime_identity(native,env):
+def runtime_identity(native,env,*,profile_nccl=False):
  from .generic_session import _active
- if _active is None:return _runtime_identity_uncached(native,env)
+ if _active is None:return _runtime_identity_uncached(native,env,profile_nccl=profile_nccl)
  from .autotune import _dependency_identity,_stat_identity
  dependency=_dependency_identity(native,env)
  if dependency is None:return _runtime_identity_uncached(native,env)
@@ -108,4 +143,5 @@ def runtime_identity(native,env):
  key=(tuple((str(p),_stat_identity(p)) for p in files),dependency['cuda_library_sha256'])
  if key not in _runtime_identity_cache:
   _runtime_identity_cache.clear();_runtime_identity_cache[key]=_runtime_identity_uncached(native,env)
- return dict(_runtime_identity_cache[key])
+ identity=dict(_runtime_identity_cache[key])
+ return _with_profile_nccl(identity,dependency,env) if profile_nccl else identity

@@ -27,6 +27,7 @@ _BACKENDS = {
 }
 _PRESETS = ("balanced", "max_capacity")
 _RUNTIME = ("native_sha256", "cuda_library_sha256")
+_NCCL_RUNTIME = "nccl_library_sha256"
 _INVENTORY = ("device", "compute_major", "compute_minor", "sm_count", "total_bytes")
 _VERIFICATION = "INDEPENDENT_LAYER_COUNTS_AND_EXACT_TERMINAL_SETS"
 _COMMON = ("strategy", "owner_lanes", "queue_capacity", "banks", "exact_exchange",
@@ -286,7 +287,10 @@ def _capacity_verification(profiles):
 
 
 def _runtime_projection(runtime):
-    return {key: runtime.get(key) for key in _RUNTIME} if isinstance(runtime, dict) else None
+    if not isinstance(runtime, dict):
+        return None
+    keys = (*_RUNTIME, _NCCL_RUNTIME) if _NCCL_RUNTIME in runtime else _RUNTIME
+    return {key: runtime.get(key) for key in keys}
 
 
 def validate_registry(value):
@@ -319,7 +323,9 @@ def validate_registry(value):
                     or not _int(rank["sm_count"], 1, 4096) or not _int(rank["vram_bytes"])):
                 raise ValueError("PROFILE_REGISTRY_HARDWARE")
         runtime = entry["runtime"]
-        if not _mapping(runtime, " ".join(_RUNTIME)) or not all(_digest(x) for x in runtime.values()):
+        keys = " ".join(_RUNTIME)
+        if (not (_mapping(runtime, keys) or schema == SCHEMA and _mapping(runtime, keys + " " + _NCCL_RUNTIME))
+                or not all(_digest(x) for x in runtime.values())):
             raise ValueError("PROFILE_REGISTRY_RUNTIME")
         profiles = entry["profiles"]
         if not _mapping(profiles, " ".join(_PRESETS)):
@@ -492,9 +498,12 @@ def matching_profiles(registry, graph_digest, hardware_key, runtime):
     if registry["schema"] != SCHEMA or hardware_key is None:
         return []
     identity = _runtime_projection(runtime)
+    if identity is None:
+        return []
+    legacy_identity = {key: identity[key] for key in _RUNTIME}
     return sorted((entry for entry in registry["entries"]
                    if entry["graph_digest"] == graph_digest and entry["hardware"] == hardware_key
-                   and entry["runtime"] == identity),
+                   and entry["runtime"] in (identity, legacy_identity)),
                   key=lambda entry: (entry["profiles"]["balanced"]["bfs_seconds"],
                                      entry["profiles"]["max_capacity"]["bfs_seconds"],
                                      entry["evidence_sha256"]))

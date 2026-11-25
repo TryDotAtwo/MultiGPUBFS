@@ -436,6 +436,12 @@ def _run_leg(graph, output, gpus, native, env, recipe, request, pressure, *,
         ))
         if same_visibility and preflight.get("status") in ("VERIFIED", "SINGLE_GPU"):
             profile_evidence["profile_network"] = nccl_profile_network(dict(env, **(preflight.get("policy") or {})))
+            if len(request["devices"]) > 1:
+                from multigpubfs.native_distribution import runtime_identity
+
+                provenance = runtime_identity(native, env, profile_nccl=True)
+                if all(provenance.get(key) == report["runtime_identity"].get(key) for key in BUILD_KEYS):
+                    profile_evidence["profile_nccl_library_sha256"] = provenance.get("nccl_library_sha256")
     return {
         "runtime_identity": report["runtime_identity"], "graph_digest": report["graph_digest"],
         "recipe": recipe, "transport_mode": transport_mode,
@@ -506,6 +512,10 @@ def _export_registry_pair(graph, pair_path, legs, comparison, *, resolve_indices
         return {"status": full["status"], "reason": full["reason"] or "paired full traversal exceeded 4×"}
     if legs["balanced"].get("profile_network") != legs["maxmemory"].get("profile_network"):
         return {"status": UNVERIFIED, "reason": "effective NCCL overrides differ across preset runs"}
+    nccl = legs["balanced"].get("profile_nccl_library_sha256")
+    if nccl != legs["maxmemory"].get("profile_nccl_library_sha256"):
+        return {"status": UNVERIFIED, "reason": "NCCL library provenance differs across preset runs"}
+    topology = _registry_topology(legs, resolve_indices)
     receipts = {}
     inventory = None
     pressure = legs["balanced"]["pressure"]
@@ -543,6 +553,8 @@ def _export_registry_pair(graph, pair_path, legs, comparison, *, resolve_indices
                 for rank in launch["inventory"]
             ],
         )
+        if nccl and isinstance(topology, dict):
+            report["runtime_identity"]["nccl_library_sha256"] = nccl
         receipts[label] = report
     reference, candidate = (legs[label]["profile_vram_sampling"] for label in ("balanced", "maxmemory"))
     free_at_boundaries = [[gpu["free_bytes"] for gpu in leg[boundary]["devices"]]
@@ -568,7 +580,6 @@ def _export_registry_pair(graph, pair_path, legs, comparison, *, resolve_indices
         temporary.replace(target)
     destination = pair_path / "profile"
     destination.mkdir()
-    topology = _registry_topology(legs, resolve_indices)
     _write(destination / "graph.json", graph.to_dict())
     _write(destination / "inventory.json", inventory)
     (destination / "topology.txt").write_text(legs["balanced"]["before"]["topology"] + "\n", encoding="utf-8")

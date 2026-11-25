@@ -278,7 +278,7 @@ def _load_catalog(spec, env):
 def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadline, *,
                            hardware, inventory, packet_address):
     from .native_distribution import runtime_identity
-    from .profile_registry import hardware_key, matching_profiles
+    from .profile_registry import _NCCL_RUNTIME, hardware_key, matching_profiles
 
     status = {"status": "NO_COMPATIBLE_PROFILE"}
     if spec is None:
@@ -295,10 +295,16 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
             if supported is None:
                 return None, status
             rank_inventory, devices, topology, drivers = supported
-            identity = runtime_identity(native, env)
             rank_metadata = topology.get("rank_metadata") if isinstance(topology, dict) else None
             local_layout = isinstance(topology, dict) and "local_topology" in topology
-            matches = matching_profiles(catalog, graph.digest(),
+            local_multigpu = local_layout and len(devices) > 1
+            graph_digest = graph.digest()
+            verify_nccl = local_multigpu and any(
+                entry["graph_digest"] == graph_digest and _NCCL_RUNTIME in entry["runtime"]
+                for entry in catalog["entries"]
+            )
+            identity = runtime_identity(native, env, profile_nccl=True) if verify_nccl else runtime_identity(native, env)
+            matches = matching_profiles(catalog, graph_digest,
                                         hardware_key(rank_inventory, devices, topology, driver_versions=drivers),
                                         identity)
             historical_network = None
@@ -309,13 +315,13 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
             elif matches and rank_metadata is None and nccl_profile_network(env):
                 return None, status
             if not matches and local_layout and not topology["network"]:
-                matches = matching_profiles(catalog, graph.digest(), hardware_key(
+                matches = matching_profiles(catalog, graph_digest, hardware_key(
                     rank_inventory, devices, topology["local_topology"], driver_versions=drivers), identity)
             if not matches and rank_metadata is not None:
                 # Old single-host evidence has no explicit rank topology or NCCL settings.
                 legacy_key = hardware_key(rank_inventory, devices, topology, driver_versions=drivers,
                                           legacy_cluster=True)
-                matches = matching_profiles(catalog, graph.digest(), legacy_key, identity)
+                matches = matching_profiles(catalog, graph_digest, legacy_key, identity)
             namespace = env.get("MGBFS_PROFILE_PRESSURE_NAMESPACE", "ambient")
             acceptable = {None, "ambient"} if namespace == "ambient" else {namespace}
             matches = [entry for entry in matches if
@@ -403,6 +409,10 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
                 "scope": "FULL_BFS_HISTORICAL_PROFILE",
             }
             if preset == "maxmemory":
+                if local_multigpu:
+                    nccl = identity.get(_NCCL_RUNTIME)
+                    if not nccl or any(source["runtime"].get(_NCCL_RUNTIME) != nccl for source in (baseline[0], entry)):
+                        historical_network = None
                 status["capacity_comparison"] = {
                     "baseline_evidence_sha256": baseline[0]["evidence_sha256"],
                     "baseline_arm": baseline[1],
