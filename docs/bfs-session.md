@@ -52,6 +52,8 @@ With three slots, a separate stream packs outgoing data. NCCL waits for the pack
 
 For lower-level launches, `MGBFS_SEGMENT_PACKET_RING_SLOTS` and `MGBFS_SEGMENT_PACKET_RX_SLOTS` set the slots separately.
 
+`MGBFS_SEGMENT_PACKET_ROUTE_LOOKAHEAD=1` admits two producer slots. When both pinned metadata buffers are available, the next tile and its readback are queued before the CPU consumes the current tile. The packet receipt reports this path as `route_metadata_lookahead`.
+
 ```python
 result = bfs.traverse("graph.json", preset="maxmemory", native_options={
     "memory_backend": "permutation_bitmap", "segment_strategy": "atomic",

@@ -405,6 +405,11 @@ struct PacketSourceScratch {
     runs: Vec<ShardRun>,
 }
 
+struct RoutePrefetch {
+    alternate_metadata: PinnedStatus,
+    ready: [PacketEvent; 2],
+}
+
 pub(super) struct PacketEvent {
     ptr: *mut c_void,
     device: i32,
@@ -517,6 +522,7 @@ pub(super) struct PacketRuntime {
     split_destination_windows: u64,
     source_scratch: PacketSourceScratch,
     route_metadata: Option<PinnedStatus>,
+    route_prefetch: Option<RoutePrefetch>,
     route_receive_progress: bool,
     pub(super) producer_rows: u32,
     pub(super) route_lookahead: bool,
@@ -548,6 +554,18 @@ impl PacketRuntime {
             .checked_mul(std::mem::size_of::<u32>())
             .ok_or("SEGMENT_PACKET_METADATA_SIZE")?;
         let route_metadata = PinnedStatus::try_new(metadata_bytes)?;
+        let route_prefetch = if plan.compact_route_lookahead && route_metadata.is_some() {
+            PinnedStatus::try_new(metadata_bytes)?
+                .map(|alternate_metadata| -> Result<_> {
+                    Ok(RoutePrefetch {
+                        alternate_metadata,
+                        ready: [PacketEvent::new(device)?, PacketEvent::new(device)?],
+                    })
+                })
+                .transpose()?
+        } else {
+            None
+        };
         let route_receive_progress = plan.compact_packet_slots == 3
             || (route_metadata.is_some()
                 && (plan.compact_route_lookahead
@@ -562,6 +580,7 @@ impl PacketRuntime {
             device,
         )?;
         transport.route_metadata = route_metadata;
+        transport.route_prefetch = route_prefetch;
         transport.producer_rows = producer_rows;
         transport.route_receive_progress = route_receive_progress;
         transport.route_lookahead = plan.compact_route_lookahead;
@@ -670,6 +689,7 @@ impl PacketRuntime {
             sent_header_bytes: 0,
             split_destination_windows: 0,
             route_metadata: None,
+            route_prefetch: None,
             producer_rows: 0,
             route_receive_progress: false,
             route_lookahead: false,
@@ -824,6 +844,7 @@ impl PacketRuntime {
    "producer_slots":if self.route_lookahead{2}else{1},
    "split_destination_windows":self.split_destination_windows,
    "pinned_route_metadata":self.route_metadata.is_some(),
+    "route_metadata_lookahead":self.route_prefetch.is_some(),
    "route_receive_progress":self.route_receive_progress,
    "pinned_tx_header":self.tx.iter().all(|slot| slot.header.is_some()),
    "producer_queue_allocated_bytes":producer_queue_bytes,
@@ -1410,13 +1431,13 @@ impl SegmentedDistributedBfs {
     fn wait_for_source_route(
         &mut self,
         transport: &mut PacketRuntime,
+        slot: usize,
         future: u32,
         stats: &mut PacketLayerStats,
         stop: &impl Fn() -> u32,
-        receive_progress: bool,
     ) -> PacketResult<()> {
         let stream = self.route_stream.ptr;
-        if !receive_progress {
+        if !transport.route_receive_progress {
             crate::generic_native::checked!(cudaStreamSynchronize, unsafe {
                 cudaStreamSynchronize(stream)
             })?;
@@ -1425,10 +1446,17 @@ impl SegmentedDistributedBfs {
         let started = std::time::Instant::now();
         loop {
             check_packet_stop(stop)?;
-            match unsafe { cudaStreamQuery(stream) } {
-                0 => break,
-                600 => {}
-                status => return Err(format!("SEGMENT_PACKET_ROUTE_STATUS_{status}").into()),
+            let ready = if let Some(prefetch) = &transport.route_prefetch {
+                prefetch.ready[slot].is_ready()?
+            } else {
+                match unsafe { cudaStreamQuery(stream) } {
+                    0 => true,
+                    600 => false,
+                    status => return Err(format!("SEGMENT_PACKET_ROUTE_STATUS_{status}").into()),
+                }
+            };
+            if ready {
+                break;
             }
             let elapsed = started.elapsed();
             if elapsed >= PACKET_TIMEOUT {
@@ -1444,6 +1472,28 @@ impl SegmentedDistributedBfs {
         }
         // Even short kernels give an incoming grant a chance to progress.
         self.service_source_grant(transport, future, stats, stop)?;
+        Ok(())
+    }
+
+    fn copy_route_metadata(
+        &self,
+        transport: &PacketRuntime,
+        slot: usize,
+        metadata: *mut u32,
+        words: usize,
+    ) -> Result<()> {
+        crate::generic_native::checked!(cudaMemcpyAsync, unsafe {
+            cudaMemcpyAsync(
+                metadata.cast(),
+                self.send[slot].counts.ptr,
+                words * std::mem::size_of::<u32>(),
+                2,
+                self.route_stream.ptr,
+            )
+        })?;
+        if let Some(prefetch) = &transport.route_prefetch {
+            prefetch.ready[slot].record(&self.route_stream)?;
+        }
         Ok(())
     }
 
@@ -1472,12 +1522,20 @@ impl SegmentedDistributedBfs {
             local_owner,
             runs,
         } = scratch;
-        let metadata_ptr = if let Some(pinned) = &transport.route_metadata {
+        let primary_metadata = if let Some(pinned) = &transport.route_metadata {
             pinned.ptr
         } else {
             pageable_metadata.resize(metadata_words, 0u32);
             pageable_metadata.as_mut_ptr()
         };
+        let metadata = [
+            primary_metadata,
+            transport
+                .route_prefetch
+                .as_ref()
+                .map_or(primary_metadata, |prefetch| prefetch.alternate_metadata.ptr),
+        ];
+        let eager_route = transport.route_prefetch.is_some();
         local_owner.clear();
         let mut stats = PacketLayerStats::default();
         if stats_on {
@@ -1495,33 +1553,36 @@ impl SegmentedDistributedBfs {
                 if !progress_during_route {
                     while self.service_source_grant(transport, future, &mut stats, stop)? {}
                 }
-                let slot = match prefetched.take() {
+                let previous_prefetch = prefetched.take();
+                let slot = match previous_prefetch {
                     Some(slot) => slot,
                     None => {
                         self.start_packet_route(transport, 0, *range, cursor, *batch)?;
                         0
                     }
                 };
-                let st = self.route_stream.ptr;
-                crate::generic_native::checked!(cudaMemcpyAsync, unsafe {
-                    cudaMemcpyAsync(
-                        metadata_ptr.cast(),
-                        self.send[slot].counts.ptr,
-                        metadata_words * std::mem::size_of::<u32>(),
-                        2,
-                        st,
-                    )
-                })?;
-                self.wait_for_source_route(
-                    transport,
-                    future,
-                    &mut stats,
-                    stop,
-                    progress_during_route,
-                )?;
-                // Reading is safe only after the route stream has completed the copy.
-                let metadata = unsafe { std::slice::from_raw_parts(metadata_ptr, metadata_words) };
-                let (counts, errors) = metadata.split_at(queue_count);
+                if previous_prefetch.is_none() || !eager_route {
+                    self.copy_route_metadata(transport, slot, metadata[slot], metadata_words)?;
+                }
+                let parents = (range.end - cursor).min(u64::from(*batch));
+                let next_cursor = cursor + parents;
+                let next_slot = 1 - slot;
+                if eager_route && next_cursor < range.end {
+                    // Both tiles read the immutable current frontier. Queue the alternate
+                    // copy before the host consumes this tile. Its event covers only
+                    // this tile's metadata.
+                    self.start_packet_route(transport, next_slot, *range, next_cursor, *batch)?;
+                    self.copy_route_metadata(
+                        transport,
+                        next_slot,
+                        metadata[next_slot],
+                        metadata_words,
+                    )?;
+                }
+                self.wait_for_source_route(transport, slot, future, &mut stats, stop)?;
+                let published =
+                    unsafe { std::slice::from_raw_parts(metadata[slot], metadata_words) };
+                let (counts, errors) = published.split_at(queue_count);
                 match crate::segmented_history::classify_route_and_regeneration(
                     errors[0], errors[1],
                 ) {
@@ -1530,13 +1591,14 @@ impl SegmentedDistributedBfs {
                         *batch = (*batch / 2).max(1);
                         self.queue_batch_ceiling = self.queue_batch_ceiling.min(*batch);
                         self.source_retries += 1;
-                        continue; // no owner publication or offer has happened for this tile
+                        // Drop the speculative alternate tile. Re-routing is ordered
+                        // behind both copies on the same stream and nothing was offered.
+                        continue;
                     }
                     status => return Err(format!("SEGMENTED_ROUTE_{status}").into()),
                 }
                 let upper = (u64::from(*batch) * u64::from(self.base.generators))
                     .min(u64::from(p.queue_capacity)) as u32;
-                let parents = (range.end - cursor).min(u64::from(*batch));
                 spans.clear();
                 let (produced, max_bucket) = read_route_counts(counts, upper, spans)?;
                 if produced > transport.producer_rows
@@ -1544,13 +1606,11 @@ impl SegmentedDistributedBfs {
                 {
                     return Err("SEGMENT_PACKET_PRODUCER_COUNT".into());
                 }
-                // After count validation the next tile can read the immutable source bank
-                // while NCCL staging and the owner consume this tile. Both consumers
-                // drain before cycling back to the slot. Route scratch stays on one stream.
-                let next_cursor = cursor + parents;
                 if transport.route_lookahead && next_cursor < range.end {
-                    self.start_packet_route(transport, 1 - slot, *range, next_cursor, *batch)?;
-                    prefetched = Some(1 - slot);
+                    if !eager_route {
+                        self.start_packet_route(transport, next_slot, *range, next_cursor, *batch)?;
+                    }
+                    prefetched = Some(next_slot);
                     self.prefetched_chunks += 1;
                 }
                 stats.max_bucket = stats.max_bucket.max(max_bucket);
