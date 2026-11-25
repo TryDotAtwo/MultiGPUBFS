@@ -271,6 +271,40 @@ def test_path_queries_have_pinned_artifacts_and_preserve_traversal(tmp_path):
     assert len(hub.commits) == 4
 
 
+@pytest.mark.parametrize(("bad_schema", "error"), [
+    (False, "row count differs"),
+    (True, "generator-ID sequence schema"),
+])
+def test_external_manifest_must_have_matching_parquet_evidence(tmp_path, bad_schema, error):
+    output = tmp_path / "nearest"
+    paths(output, "nearest")
+    source = LocalHub(tmp_path / "external-cache")
+    publish(output, token=False, author="Ivan", api=source)
+    row = from_bytes(source.snapshots[source.head]["path-queries.parquet"]).to_pylist()[0]
+    files = source.snapshots[row["manifest_revision"]]
+    manifest = json.loads(files[row["manifest_path"]])
+    part = manifest["parts"][0]
+    original = from_bytes(files[part["path"]])
+    if bad_schema:
+        invalid = original.set_column(2, "generator_ids", pa.array([[0]], type=pa.list_(pa.int64())))
+    else:
+        invalid = original.slice(0, 0)
+    buffer = pa.BufferOutputStream()
+    pq.write_table(invalid, buffer)
+    bad_part = buffer.getvalue().to_pybytes()
+    part.update(sha256=sha(bad_part), bytes=len(bad_part))
+    body = encoded(manifest)
+
+    atlas = LocalHub(tmp_path / "atlas-cache")
+    atlas.record({**atlas.snapshots[atlas.head], manifest["graph_path"]: files[manifest["graph_path"]],
+                  row["manifest_path"]: body, part["path"]: bad_part})
+    pointer = {"repo_id": "another/path-fixture", "path": row["manifest_path"],
+               "revision": atlas.head, "sha256": sha(body)}
+    with pytest.raises(ValueError, match=error):
+        publish(output, token=False, author="Ivan", api=atlas, manifest=pointer)
+    assert not atlas.commits
+
+
 def test_invalid_and_incomplete_path_results(tmp_path):
     hub = LocalHub(tmp_path / "cache")
     incomplete = tmp_path / "incomplete"

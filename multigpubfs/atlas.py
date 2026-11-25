@@ -91,6 +91,14 @@ class _Hub:
             repo_id=repo or self.repo, filename=path, revision=revision, repo_type="dataset",
         ))
 
+    def open_part(self, path, revision, repo, item):
+        from huggingface_hub import HfApi, HfFileSystem
+
+        if item.lfs and type(self.api) is HfApi and not self.api.headers:
+            filesystem = HfFileSystem(endpoint=self.api.endpoint, token=self.api.token)
+            return filesystem.open(f"datasets/{repo}/{path}", "rb", revision=revision, cache_type="none")
+        return self.get(path, revision, repo).open("rb")
+
     def files(self, paths, revision, repo=None):
         files = {}
         paths = list(paths)
@@ -439,6 +447,18 @@ def _part_count(query):
     return sum(int(entry["count"]) for entry in query["counts"])
 
 
+def _path_part_rows(file):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    with pq.ParquetFile(file) as parquet:
+        schema = parquet.schema_arrow
+        types = {"target_index": pa.int64(), "length": pa.int64(), "generator_ids": pa.list_(pa.int32())}
+        if any(name not in schema.names or schema.field(name).type != kind for name, kind in types.items()):
+            raise ValueError("path artifact does not have the generator-ID sequence schema")
+        return parquet.metadata.num_rows
+
+
 def _extends_path_coverage(old, new):
     if old["d_min"] is not None and new["d_min"] != old["d_min"]:
         return False
@@ -461,9 +481,6 @@ def _extends_path_coverage(old, new):
 
 
 def _local_manifest(hub, output, raw, report, query, definition, author):
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
     file = report.get("path_file")
     if definition is None:
         raise ValueError("path publication requires graph.json to interpret generator IDs")
@@ -475,13 +492,8 @@ def _local_manifest(hub, output, raw, report, query, definition, author):
         )
         if part.payload.stat().st_size != part.size:
             raise ValueError("path artifact checksum or size differs from the receipt")
-        with pq.ParquetFile(part.payload) as parquet:
-            schema = parquet.schema_arrow
-            types = {"target_index": pa.int64(), "length": pa.int64(), "generator_ids": pa.list_(pa.int32())}
-            if any(name not in schema.names or schema.field(name).type != kind for name, kind in types.items()):
-                raise ValueError("path artifact does not have the generator-ID sequence schema")
-            if parquet.metadata.num_rows != _part_count(query):
-                raise ValueError("path artifact row count differs from the committed receipt")
+        if _path_part_rows(part.payload) != _part_count(query):
+            raise ValueError("path artifact row count differs from the committed receipt")
         name = "paths.parquet"
         payloads[name] = part
         parts.append({"path": name, "sha256": part.sha256, "bytes": part.size})
@@ -528,12 +540,18 @@ def _check_manifest(hub, pointer, query):
     if len(set(paths)) != len(parts) or path in paths or (_part_count(query) and not parts):
         raise ValueError("path manifest has missing or duplicate parts")
     found = hub.files(paths, revision, repo)
+    total_rows = 0
     for part in parts:
         artifact = part["path"]
-        if artifact not in found or not hub.matches(
-            artifact, found[artifact], _natural(part["bytes"]), _hex(part["sha256"]), revision, repo,
+        item = found.get(artifact)
+        if item is None or not hub.matches(
+            artifact, item, _natural(part["bytes"]), _hex(part["sha256"]), revision, repo,
         ):
             raise ValueError(f"path manifest part failed verification: {artifact}")
+        with hub.open_part(artifact, revision, repo, item) as file:
+            total_rows += _path_part_rows(file)
+    if total_rows != _part_count(query):
+        raise ValueError("path manifest row count differs from the committed receipt")
     graph_path = _repo_path(body["graph_path"])
     raw_graph = hub.get(graph_path, revision, repo).read_bytes()
     if _digest(raw_graph) != _hex(body["graph_sha256"]):
