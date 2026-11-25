@@ -248,15 +248,16 @@ impl TransitionSpool {
         if self.runs == 0 {
             // All edges fit in the bounded pending buffer. Sort once and
             // build the CSR directly, without writing and rereading a run.
+            let edges = self.pending.len() as u64;
             let index_bytes = csr_index_bytes(rows)?;
-            let csr_bytes = (self.pending.len() as u64)
+            let csr_bytes = edges
                 .checked_mul(CSR_EDGE_BYTES)
                 .and_then(|size| size.checked_add(index_bytes))
                 .ok_or("PATH_LINEAGE_SIZE")?;
             self.reserve(csr_bytes)?;
             self.pending.sort_unstable();
             let bytes = write_owner_csr(
-                staging, committed, rows, self.budget,
+                staging, committed, rows, edges, self.budget,
                 self.pending.iter().copied().map(Ok).map(dense), checkpoint,
             )?;
             self.pending.clear();
@@ -315,6 +316,7 @@ impl TransitionSpool {
             staging,
             committed,
             rows,
+            edges,
             self.budget - self.live,
             Merge::new(&inputs)?.with_tail(std::mem::take(&mut self.pending)).map(dense),
             checkpoint,
@@ -360,10 +362,11 @@ fn csr_index_bytes(rows: u64) -> Result<u64> {
 /// Consume one owner layer's externally sorted transitions. The directory is
 /// published atomically only after both files are closed. The budget includes
 /// their full on-disk size and is supplied by the owner of the disk allocation.
-pub(crate) fn write_owner_csr(
+fn write_owner_csr(
     staging: &Path,
     committed: &Path,
     rows: u64,
+    expected_edges: u64,
     budget: u64,
     transitions: impl IntoIterator<Item = Result<Transition>>,
     mut checkpoint: impl FnMut() -> Result<()>,
@@ -416,6 +419,10 @@ pub(crate) fn write_owner_csr(
         }
         if next_child != rows {
             return Err("PATH_LINEAGE_MISSING_CHILD".into());
+        }
+        // A run truncated at a record boundary can still cover every child.
+        if count != expected_edges {
+            return Err("PATH_LINEAGE_EDGE_COUNT".into());
         }
         offsets.write_all(&count.to_le_bytes()).map_err(io_error)?;
         offsets.flush().map_err(io_error)?;
@@ -597,6 +604,37 @@ mod tests {
     }
 
     #[test]
+    fn truncated_run_cannot_publish_a_layer_with_missing_incoming_edges() {
+        let root = std::env::temp_dir().join(format!("mgbfs-csr-truncated-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let mut spool = TransitionSpool::new(root.join("spool"), 1 << 24).unwrap();
+        let mut edges = (0..=RUN_ROWS as u64)
+            .map(|parent| Transition {
+                child: 0,
+                parent_rank: 0,
+                parent,
+                generator: 0,
+            })
+            .collect::<Vec<_>>();
+        spool.add(&mut edges).unwrap();
+        File::options()
+            .write(true)
+            .open(spool.path(0, 0))
+            .unwrap()
+            .set_len(((RUN_ROWS - 1) * RECORD_BYTES) as u64)
+            .unwrap();
+
+        let staging = root.join("stage");
+        let committed = root.join("complete");
+        let result = spool.finish(&staging, &committed, &[1], || Ok(()));
+        let published = staging.exists() || committed.exists();
+        drop(spool);
+        fs::remove_dir_all(root).unwrap();
+        assert_eq!(result.unwrap_err(), "PATH_LINEAGE_EDGE_COUNT");
+        assert!(!published);
+    }
+
+    #[test]
     fn short_input_batches_write_direct_csr_and_preserve_every_edge() {
         let root = std::env::temp_dir().join(format!("mgbfs-path-sort-{}", std::process::id()));
         fs::create_dir(&root).unwrap();
@@ -671,14 +709,14 @@ mod tests {
         ];
         let records = || links.into_iter().map(Ok);
         assert_eq!(
-            write_owner_csr(&staging, &committed, 2, 71, records(), || Ok(())).unwrap_err(),
+            write_owner_csr(&staging, &committed, 2, 3, 71, records(), || Ok(())).unwrap_err(),
             "LINEAGE_LIMIT"
         );
         assert!(!staging.exists() && !committed.exists());
-        assert!(write_owner_csr(&staging, &committed, 2, 72, [Ok(links[2])], || Ok(())).is_err());
+        assert!(write_owner_csr(&staging, &committed, 2, 3, 72, [Ok(links[2])], || Ok(())).is_err());
         assert!(!staging.exists() && !committed.exists());
         assert_eq!(
-            write_owner_csr(&staging, &committed, 2, 72, records(), || Ok(())).unwrap(),
+            write_owner_csr(&staging, &committed, 2, 3, 72, records(), || Ok(())).unwrap(),
             72
         );
         let offsets = fs::read(committed.join("offsets")).unwrap();
